@@ -1,4 +1,4 @@
-# hao25
+# aki57
 import tensorflow as tf
 import tensorlayer as tl
 from tensorlayer.layers import (BatchNormLayer, ConcatLayer, Conv2d, DepthwiseConv2d, InputLayer, MaxPool2d)

@@ -11,7 +11,7 @@ import tensorlayer as tl
 sys.path.append('.')
 
 from openpose_plus.inference.common import measure, rename_tensor
-from openpose_plus.models import get_model
+from openpose_plus.models import get_base_model
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -80,7 +80,7 @@ def main():
 
     def model_func():
         target_size = (args.width, args.height)
-        return get_model(args.base_model)(target_size, args.data_format)
+        return get_base_model(args.base_model)(target_size, args.data_format)
 
     export_model(model_func, args.checkpoint_dir, args.path_to_npz, args.graph_filename, args.uff_filename)
 

@@ -34,6 +34,7 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 
 # FIXME: Don't use global variables.
 # define hyper-parameters for training
+node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
 lr_decay_every_step = config.TRAIN.lr_decay_every_step
 n_step = config.TRAIN.n_step
@@ -278,80 +279,74 @@ def single_train(training_dataset):
                 break
 
 
-def _mock_map_fn(img_list, annos):
-    """TF Dataset pipeline."""
-    image = tf.read_file(img_list)
-    image = tf.image.decode_jpeg(image, channels=3)  # get RGB with 0~1
-    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-
-    image = np.ones((hin, win, 3), dtype=np.float32)
-    resultmap = np.ones((hout, wout, 57), dtype=np.float32)
-    mask = np.ones((hout, wout, 1), dtype=np.float32)
-
-    return image, resultmap, mask
-
-
-def _parallel_train_model(img, results, mask):
-    net, total_loss, log_tensors = make_model(img, results, mask, is_train=True, reuse=False)
-    return net, total_loss, log_tensors
-
-
 def parallel_train(training_dataset):
-    import horovod.tensorflow as hvd
-
-    hvd.init()  # Horovod
-
-    ds = training_dataset.shuffle(buffer_size=4096)
-    ds = ds.shard(num_shards=hvd.size(), index=hvd.rank())
-    ds = ds.repeat(n_epoch)
-    ds = ds.map(_map_fn, num_parallel_calls=4)
-    ds = ds.batch(batch_size)
-    ds = ds.prefetch(buffer_size=1)
-
-    iterator = ds.make_one_shot_iterator()
-    one_element = iterator.get_next()
-    net, total_loss, log_tensors = make_model(*one_element, is_train=True, reuse=False)
-    x_ = net.img  # net input
-    last_conf = net.last_conf  # net output
-    last_paf = net.last_paf  # net output
-    confs_ = net.confs  # GT
-    pafs_ = net.pafs  # GT
-    mask = net.m1  # mask1, GT
-    # net.m2 = m2                 # mask2, GT
-    stage_losses = net.stage_losses
-    l2_loss = net.l2_loss
-
     global_step = tf.Variable(1, trainable=False)
-    # scaled_lr = lr_init * hvd.size()  # Horovod: scale the learning rate linearly
-    scaled_lr = lr_init  # Linear scaling rule is not working in openpose training.
     with tf.variable_scope('learning_rate'):
-        lr_v = tf.Variable(scaled_lr, trainable=False)
-
+        lr_v = tf.Variable(lr_init, trainable=False)
     opt = tf.train.MomentumOptimizer(lr_v, 0.9)
-    opt = hvd.DistributedOptimizer(opt)  # Horovod
-    train_op = opt.minimize(total_loss, global_step=global_step)
+
+    tower_grads = []
+    for i, gpu_id in enumerate(node_num):
+        with tf.device('/gpu:%d' % gpu_id):
+            with tf.name_scope('model_%d' % gpu_id) as scope:
+                ds = training_dataset.shard(num_shards=node_num, index=i)
+                ds = ds.repeat(n_epoch)
+                ds = ds.shuffle(buffer_size=4096)
+                ds = ds.map(_map_fn, num_parallel_calls=4)
+                ds = ds.batch(batch_size)
+                ds = ds.prefetch(buffer_size=1)
+
+                iterator = ds.make_one_shot_iterator()
+                one_element = iterator.get_next()
+                net, total_loss, log_tensors = make_model(*one_element, is_train=True, reuse=False)
+                x_ = net.img  # net input
+                last_conf = net.last_conf  # net output
+                last_paf = net.last_paf  # net output
+                confs_ = net.confs  # GT
+                pafs_ = net.pafs  # GT
+                mask = net.m1  # mask1, GT
+                # net.m2 = m2                 # mask2, GT
+                stage_losses = net.stage_losses
+                l2_loss = net.l2_loss
+
+                grads = opt.compute_gradients(total_loss)
+                tower_grads.append(grads)
+
+    def average_gradients(tower_grads):
+        average_grads = []
+        for grad_and_vars in zip(*tower_grads):
+            grads = []
+            for g, _ in grad_and_vars:
+                expanded_g = tf.expand_dims(g, 0)
+                grads.append(expanded_g)
+
+            grad = tf.concat(grads, 0)
+            grad = tf.reduce_mean(grad, 0)
+
+            v = grad_and_vars[0][1]
+            grad_and_var = (grad, v)
+            average_grads.append(grad_and_var)
+
+        return average_grads
+
+    grads = average_gradients(tower_grads)
+    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+
+    summary_op = tf.summary.merge_all()
+
+    train_op = opt.minimize(base_loss, global_step=global_step)
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 
-    config.gpu_options.allow_growth = True  # Horovod
-    config.gpu_options.visible_device_list = str(hvd.local_rank())  # Horovod
+    config.gpu_options.per_process_gpu_memory_fraction = 0.5
+    config.gpu_options.allow_growth = True
+    config.gpu_options.visible_device_list = ",".join(list(range(node_num)))  # Horovod
 
     # Add variable initializer.
     init = tf.global_variables_initializer()
 
-    # Horovod: broadcast initial variable states from rank 0 to all other processes.
-    # This is necessary to ensure consistent initialization of all workers when
-    # training is started with random weights or restored from a checkpoint.
-    bcast = hvd.broadcast_global_variables(0)  # Horovod
-
-    # Horovod: adjust number of steps based on number of GPUs.
-    global n_step, lr_decay_every_step
-    n_step = n_step // hvd.size() + 1  # Horovod
-    lr_decay_every_step = lr_decay_every_step // hvd.size() + 1  # Horovod
-
     # Start training
     with tf.Session(config=config) as sess:
         init.run()
-        bcast.run()  # Horovod
         print('Worker{}: Initialized'.format(hvd.rank()))
         print('Worker{}: Start - n_step: {} batch_size: {} lr_init: {} lr_decay_every_step: {}'.format(
             hvd.rank(), n_step, batch_size, lr_init, lr_decay_every_step))
@@ -372,7 +367,7 @@ def parallel_train(training_dataset):
             tic = time.time()
             if step != 0 and (step % lr_decay_every_step == 0):
                 new_lr_decay = lr_decay_factor**(step // lr_decay_every_step)
-                sess.run(tf.assign(lr_v, scaled_lr * new_lr_decay))
+                sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
             [_, _loss, _stage_losses, _l2, conf_result, paf_result] = \
                 sess.run([train_op, total_loss, stage_losses, l2_loss, last_conf, last_paf])
@@ -396,9 +391,6 @@ def parallel_train(training_dataset):
                                  'train_%d_' % step)
 
                     # save model
-                    # tl.files.save_npz(
-                    #    net.all_params, os.path.join(model_path, 'pose' + str(step) + '.npz'), sess=sess)
-                    # tl.files.save_npz(net.all_params, os.path.join(model_path, 'pose.npz'), sess=sess)
                     tl.files.save_npz_dict(
                         net.all_params, os.path.join(model_path, 'pose' + str(step) + '.npz'), sess=sess)
                     tl.files.save_npz_dict(net.all_params, os.path.join(model_path, 'pose.npz'), sess=sess)

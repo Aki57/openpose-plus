@@ -12,7 +12,7 @@ b_init2 = tf.constant_initializer(value=0.0)
 decay = 0.999
 
 
-def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_format='channels_last'):
+def model(x, n_pos, is_train=False, reuse=None, data_format='channels_last'):
     """Defines the entire pose estimation model."""
 
     def _conv2d(x, c, filter_size, strides, act, padding, name):
@@ -45,7 +45,7 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
             raise ValueError('invalid data_format: %s' % data_format)
         return ConcatLayer(inputs, concat_dim, name=name)
 
-    def stage(cnn, b1, b2, n_pos, maskInput1, maskInput2, is_train, name='stageX'):
+    def stage(cnn, b1, b2, n_pos, is_train, name='stageX'):
         """Define the archuecture of stage 2 to 6."""
         with tf.variable_scope(name):
             net = concat([cnn, b1, b2], 'concat')
@@ -63,8 +63,6 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
                 b1 = _conv2d(b1, 128, (1, 1), (1, 1), None, 'VALID', 'c6')
                 b1 = bn(b1, 'bn6')
                 b1 = _conv2d_with_bias_init(b1, n_pos, (1, 1), (1, 1), None, 'VALID', 'conf')
-                if is_train:
-                    b1.outputs = b1.outputs * maskInput1
             with tf.variable_scope("branch2"):
                 b2 = _conv2d(net, 128, (3, 3), (1, 1), None, 'SAME', 'c1')
                 b2 = bn(b2, 'bn1')
@@ -79,8 +77,6 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
                 b2 = _conv2d(b2, 128, (1, 1), (1, 1), None, 'VALID', 'c6')
                 b2 = bn(b2, 'bn6')
                 b2 = _conv2d_with_bias_init(b2, 38, (1, 1), (1, 1), None, 'VALID', name='pafs')
-                if is_train:
-                    b2.outputs = b2.outputs * maskInput2
         return b1, b2
 
     def cnn_net(x, is_train):
@@ -141,12 +137,9 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
             b1 = bn(b1, 'bn2')
             b1 = _conv2d(b1, 128, (3, 3), (1, 1), None, 'SAME', 'c3')
             b1 = bn(b1, 'bn3')
-            # b1 = _conv2d(b1, 512, (1, 1), (1, 1), None, 'VALID', 'c4')
             b1 = _conv2d(b1, 128, (1, 1), (1, 1), None, 'VALID', 'c4')
             b1 = bn(b1, 'bn4')
             b1 = _conv2d_with_bias_init(b1, n_pos, (1, 1), (1, 1), None, 'VALID', 'confs')
-            if is_train:
-                b1.outputs = b1.outputs * mask_miss1
         with tf.variable_scope("stage1/branch2"):
             b2 = _conv2d(cnn, 128, (3, 3), (1, 1), None, 'SAME', 'c1')
             b2 = bn(b2, 'bn1')
@@ -154,19 +147,16 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
             b2 = bn(b2, 'bn2')
             b2 = _conv2d(b2, 128, (3, 3), (1, 1), None, 'SAME', 'c3')
             b2 = bn(b2, 'bn3')
-            # b2 = _conv2d(b2, 512, (1, 1), (1, 1), None, 'VALID', 'c4')
             b2 = _conv2d(b2, 128, (1, 1), (1, 1), None, 'VALID', 'c4')
             b2 = bn(b2, 'bn4')
             b2 = _conv2d_with_bias_init(b2, 38, (1, 1), (1, 1), None, 'VALID', 'pafs')
-            if is_train:
-                b2.outputs = b2.outputs * mask_miss2
             b1_list.append(b1)
             b2_list.append(b2)
 
         # stage 2~6
         # for i in range(2, 7): # [2, 3, 4, 5, 6]
         for i in [5, 6]:
-            b1, b2 = stage(cnn, b1_list[-1], b2_list[-1], n_pos, mask_miss1, mask_miss2, is_train, name='stage%d' % i)
+            b1, b2 = stage(cnn, b1_list[-1], b2_list[-1], n_pos, is_train, name='stage%d' % i)
             b1_list.append(b1)
             b2_list.append(b2)
         net = tl.layers.merge_networks([b1_list[-1], b2_list[-1]])
@@ -175,5 +165,5 @@ def model(x, n_pos, mask_miss1, mask_miss2, is_train=False, reuse=None, data_for
 
 if __name__ == '__main__':
     x = tf.placeholder("float32", [None, 368, 368, 3])
-    _, _, _, net = model(x, 19, None, None, False, False)
+    _, _, _, net = model(x, 19, False, False)
     net.print_layers()

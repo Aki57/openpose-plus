@@ -43,11 +43,9 @@ class Human:
     __slots__ = ('body_parts', 'pairs', 'uidx_list', 'score')
 
     def __init__(self, pairs):
-        self.pairs = []
+        self.pairs = pairs
         self.uidx_list = set()
         self.body_parts = {}
-        for pair in pairs:
-            self.add_pair(pair)
         self.score = 0.0
 
     def __str__(self):
@@ -150,3 +148,23 @@ class PostProcessor(object):
 
         humans = estimate_paf(peaks[0], heatmap[0], pafmap[0])
         return humans, heatmap[0], pafmap[0]
+
+
+def detect_scorevol(scorevolume):
+    """ Finds maximum volumewise. Tensor scorevolume is [1, X, Y, Z, C]. """
+    scorevolume = np.squeeze(scorevolume)
+    s = scorevolume.shape
+    assert len(s) == 4, "Tensor must be 4D"
+
+    coord_det = list()
+    coord_conf = list()
+    for i in range(s[3]):
+        max_val = np.amax(scorevolume[:, :, :, i])
+        ind = np.where(scorevolume[:, :, :, i] == max_val)
+        ind = [np.median(x) for x in ind]  # this eliminates, when there are multiple maxima
+        ind = [int(x) for x in ind]
+        coord_conf.append(max_val)
+        coord_det.append(ind)
+    coord_det = np.reshape(np.array(coord_det), [-1, 3])
+    coord_conf = np.array(coord_conf)
+    return coord_det, coord_conf

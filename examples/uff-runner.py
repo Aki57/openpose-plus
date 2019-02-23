@@ -14,9 +14,9 @@ import uff
 from cv2 import imwrite
 from tensorrt.parsers import uffparser
 
-from inference.common import measure, plot_humans, read_imgfile
-from inference.post_process import PostProcessor
-from models import _input_image, get_model
+from openpose_plus.inference.common import measure, plot_humans, read_imgfile
+from openpose_plus.inference.post_process import PostProcessor
+from openpose_plus.models import get_base_model
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -32,7 +32,7 @@ def _get_model_func(base_model_name):
 
         Returns a pair of lists: (inputs, outputs).
         """
-        image, conf, paf = get_model(base_model_name)(target_size, 'channels_first')
+        image, conf, paf = get_base_model(base_model_name)(target_size, 'channels_first')
         return [image], [conf, paf]
 
     return model_func

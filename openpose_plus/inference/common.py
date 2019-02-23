@@ -5,6 +5,9 @@ from distutils.dir_util import mkpath
 import numpy as np
 import tensorflow as tf
 import cv2
+import scipy.io as sio
+
+from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap
 
 regularizer_conv = 0.004
 regularizer_dsconv = 0.0004
@@ -120,6 +123,42 @@ def read_imgfile(path, width, height, data_format='channels_last'):
     if data_format == 'channels_first':
         val_image = val_image.transpose([2, 0, 1])
     return val_image / 255.0
+
+
+def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last'):
+    """Read image file and resize to network input size."""
+    rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+    dep_img = sio.loadmat(dep_path)['depthim_incolor'] / 20.0
+    dep_img = np.expand_dims(dep_img, axis=2)
+    input_2d = np.concatenate((rgb_img, dep_img), axis=2)
+    init_h, init_w, _ = input_2d.shape
+    if height is not None and width is not None:
+        input_2d = cv2.resize(input_2d, (width, height))
+    if data_format == 'channels_first':
+        input_2d = input_2d.transpose([2, 0, 1])
+    return input_2d / 255.0, init_h, init_w
+
+
+def read_3dfiles(dep_path, cam_info, keypoints2d, width, height, depth, data_format='channels_last'):
+    """Read image file and resize to network input size."""
+    dep_img = sio.loadmat(dep_path)['depthim_incolor'] / 1000.0
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, keypoints2d, (width, height, depth), f=1.2)
+    voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), 3.0, voxel_coordsvis)
+    voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, depth, 1])
+    voxel_grid = np.expand_dims(voxel_grid, -1)
+    input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
+    return np.expand_dims(input_3d, 0), trafo_params
+
+
+def tranform_keypoints2d(body, width, height, kp_score_thresh=0.25):
+    coords_2d = np.ones((18, 2)) * -1000
+    coords_2d_conf = np.zeros((18))
+    for i in body.keys():
+        coords_2d_conf[i] = body[i].score
+        if coords_2d_conf[i] > kp_score_thresh:
+            coords_2d[i,0] = body[i].x * width
+            coords_2d[i,1] = body[i].y * height
+    return coords_2d, coords_2d_conf
 
 
 def get_sample_images(w, h):
@@ -252,6 +291,47 @@ def plot_humans(image, heatMat, pafMat, humans, name):
     plt.colorbar()
     mkpath('vis')
     plt.savefig('vis/result-%s.png' % name)
+
+
+def plot_3d_person(rgb_path, dep_path, coords3d, cam, idx=0):
+    import scipy.io as sio
+    import numpy as np
+    import cv2
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+    dep_img = sio.loadmat(dep_path)['depthim_incolor']
+    coords2d_proj = cam.project(coords3d)
+
+    plt.close()
+    plt.subplot(3,1,1)
+    plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
+    plt.imshow(rgb_img)
+    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], '.')
+    plt.draw()
+    
+    plt.subplot(3,1,2)
+    plt.title('3D Body Projection on Kinect-Depth ({0})'.format(idx))
+    plt.imshow(dep_img)
+    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
+    plt.draw()
+
+    ax = plt.subplot(3,1,3, projection='3d')
+    ax.scatter(coords3d[:,0], coords3d[:,1], coords3d[:,2], 'g')  # 绘制数据点
+    for pair in np.array([[1, 2], [2, 3], [3, 4],  # right arm
+                        [1, 8], [8, 9], [9, 10],  # right leg
+                        [1, 5], [5, 6], [6, 7],  # left arm
+                        [1, 11], [11, 12], [12, 13],  # left leg
+                        # [1, 0], [2, 16], [0, 14], [14, 16], [0, 15], [15, 17], [5, 17]
+                        ]):  # head
+        ax.plot(coords3d[pair,0], coords3d[pair,1], coords3d[pair,2], linewidth=2)
+    ax.set_zlabel('Depth')  # 坐标轴
+    ax.set_ylabel('Height')
+    ax.set_xlabel('Width')
+    plt.draw()
+
+    plt.show()
 
 
 def rename_tensor(x, name):
