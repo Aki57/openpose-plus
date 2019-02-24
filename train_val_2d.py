@@ -37,11 +37,11 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 # define hyper-parameters for training
 node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
-lr_decay_interval = config.TRAIN.lr_decay_interval
-n_step = config.TRAIN.n_step
+n_epoch = config.TRAIN.n_epoch
 save_interval = config.TRAIN.save_interval
 weight_decay_factor = config.TRAIN.weight_decay_factor
 lr_init = config.TRAIN.lr_init
+lr_decay_interval = config.TRAIN.lr_decay_interval
 lr_decay_factor = config.TRAIN.lr_decay_factor
 
 # FIXME: Don't use global variables.
@@ -160,9 +160,8 @@ def _map_fn(rgb_list, depth_list, anno2ds):
     return input_2d, result2dmap
 
 
-def single_train(training_dataset):
+def train(training_dataset, epoch, n_step):
     ds = training_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
-    ds = ds.repeat(n_epoch)
     ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
     ds = ds.batch(batch_size)  # TODO: consider using tf.contrib.map_and_batch
     ds = ds.prefetch(2)
@@ -221,10 +220,52 @@ def single_train(training_dataset):
                 [img_out, confs_ground, pafs_ground, conf_result, paf_result] = sess.run([x_2d_, confs_, pafs_, last_conf, last_paf])
                 draw_results(img_out[:,:,:,:3], confs_ground, conf_result, pafs_ground, paf_result, None, 'train_%d_' % step)
                 # save model
-                tl.files.save_npz_dict(base_net.all_params, os.path.join(model_path, 'openposenet' + str(step) + '.npz'), sess=sess)
+                tl.files.save_npz_dict(base_net.all_params, os.path.join(model_path, 'openposenet-'+str(epoch)+'-'+str(step)+'.npz'), sess=sess)
                 tl.files.save_npz_dict(base_net.all_params, os.path.join(model_path, 'openposenet.npz'), sess=sess)
-            if step == n_step:  # training finished
+            # training finished
+            if step == n_step:
+                tl.files.save_npz_dict(base_net.all_params, os.path.join(model_path, 'openposenet-'+str(epoch)+'.npz'), sess=sess)
+                tl.files.save_npz_dict(base_net.all_params, os.path.join(model_path, 'openposenet.npz'), sess=sess)
                 break
+
+
+def evaluate(evaluating_dataset, epoch, n_step):
+    ds = evaluating_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
+    ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
+    ds = ds.batch(batch_size)  # TODO: consider using tf.contrib.map_and_batch
+    ds = ds.prefetch(2)
+    iterator = ds.make_one_shot_iterator()
+    one_element = iterator.get_next()
+    base_net, base_loss = make_model(*one_element, is_train=True, reuse=False)
+    l2_loss = base_net.l2_loss
+
+    config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
+
+    # start training
+    with tf.Session(config=config) as sess:
+        sess.run(tf.global_variables_initializer())
+
+        # restore pre-trained weights
+        try:
+            tl.files.load_and_assign_npz_dict(sess=sess, name=os.path.join(model_path, 'openposenet.npz'))
+        except:
+            print("no pre-trained model")
+
+        # train until the end
+        sum_loss = 0.0
+        step = 1
+        while True:
+            tic = time.time()
+            [_loss, _l2] = sess.run([base_loss, l2_loss])
+            sum_loss += _loss
+            print('Total Loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
+            if step == n_step:
+                break
+            else:
+                step += 1
+        # evaluating finished
+        avg_loss = sum_loss / n_step
+        print('Sum average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
 
 
 if __name__ == '__main__':
@@ -252,16 +293,25 @@ if __name__ == '__main__':
                     sum_anno2ds_list.extend(_anno2ds_list)
         print("Total number of own images found:", len(sum_rgbs_file_list))
 
+    from sklearn.model_selection import train_test_split
+    train_rgbs_list, eval_rgbs_list, \
+    train_depths_list, eval_depths_list, \
+    train_anno2ds_list, eval_anno2ds_list = train_test_split(
+        sum_rgbs_file_list, sum_depths_file_list, sum_anno2ds_list, test_size=0.2, random_state=42)
+
     # define data augmentation
-    def generator():
+    def train_ds_generator():
         """TF Dataset generator."""
-        for _input_rgb, _input_depth, _target_anno2d in zip(sum_rgbs_file_list, sum_depths_file_list, sum_anno2ds_list):
+        for _input_rgb, _input_depth, _target_anno2d in zip(train_rgbs_list, train_depths_list, train_anno2ds_list):
             yield _input_rgb.encode('utf-8'), _input_depth.encode('utf-8'), cPickle.dumps(_target_anno2d)
+    train_ds = tf.data.Dataset().from_generator(train_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
-    n_epoch = math.ceil(n_step / (len(sum_rgbs_file_list) / batch_size))
-    dataset = tf.data.Dataset().from_generator(generator, output_types=(tf.string, tf.string, tf.string))
+    def eval_ds_generator():
+        """TF Dataset generator."""
+        for _input_rgb, _input_depth, _target_anno2d in zip(eval_rgbs_list, eval_depths_list, eval_anno2ds_list):
+            yield _input_rgb.encode('utf-8'), _input_depth.encode('utf-8'), cPickle.dumps(_target_anno2d)
+    eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
-    if config.TRAIN.train_mode == 'single':
-        single_train(dataset)
-    else:
-        raise Exception('Unknown training mode')
+    for epoch in range(n_epoch):
+        train(train_ds, epoch, len(train_rgbs_list)/batch_size)
+        evaluate(eval_ds, epoch, len(eval_rgbs_list)/batch_size)

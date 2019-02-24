@@ -36,7 +36,7 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 # define hyper-parameters for training
 node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
-lr_decay_every_step = config.TRAIN.lr_decay_every_step
+lr_decay_interval = config.TRAIN.lr_decay_interval
 n_step = config.TRAIN.n_step
 save_interval = config.TRAIN.save_interval
 weight_decay_factor = config.TRAIN.weight_decay_factor
@@ -223,8 +223,8 @@ def single_train(training_dataset):
     l2_loss = net.l2_loss
 
     global_step = tf.Variable(1, trainable=False)
-    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_every_step: {}'.format(
-        n_step, batch_size, lr_init, lr_decay_every_step))
+    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
+        n_step, batch_size, lr_init, lr_decay_interval))
     with tf.variable_scope('learning_rate'):
         lr_v = tf.Variable(lr_init, trainable=False)
 
@@ -248,8 +248,8 @@ def single_train(training_dataset):
         while True:
             tic = time.time()
             step = sess.run(global_step)
-            if step != 0 and (step % lr_decay_every_step == 0):
-                new_lr_decay = lr_decay_factor**(step // lr_decay_every_step)
+            if step != 0 and (step % lr_decay_interval == 0):
+                new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
             [_, _loss, _stage_losses, _l2, conf_result, paf_result] = \
@@ -348,8 +348,8 @@ def parallel_train(training_dataset):
     with tf.Session(config=config) as sess:
         init.run()
         print('Worker{}: Initialized'.format(hvd.rank()))
-        print('Worker{}: Start - n_step: {} batch_size: {} lr_init: {} lr_decay_every_step: {}'.format(
-            hvd.rank(), n_step, batch_size, lr_init, lr_decay_every_step))
+        print('Worker{}: Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
+            hvd.rank(), n_step, batch_size, lr_init, lr_decay_interval))
 
         # restore pre-trained weights
         try:
@@ -365,8 +365,8 @@ def parallel_train(training_dataset):
                 break
 
             tic = time.time()
-            if step != 0 and (step % lr_decay_every_step == 0):
-                new_lr_decay = lr_decay_factor**(step // lr_decay_every_step)
+            if step != 0 and (step % lr_decay_interval == 0):
+                new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
             [_, _loss, _stage_losses, _l2, conf_result, paf_result] = \

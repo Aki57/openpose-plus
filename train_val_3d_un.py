@@ -38,12 +38,12 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 # define hyper-parameters for training
 node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
-n_step = config.TRAIN.n_step
+n_epoch = config.TRAIN.n_epoch
 save_interval = config.TRAIN.save_interval
+weight_decay_factor = config.TRAIN.weight_decay_factor
 lr_init = config.TRAIN.lr_init
 lr_decay_interval = config.TRAIN.lr_decay_interval
 lr_decay_factor = config.TRAIN.lr_decay_factor
-weight_decay_factor = config.TRAIN.weight_decay_factor
 
 # FIXME: Don't use global variables.
 # define hyper-parameters for model
@@ -71,8 +71,8 @@ def get_pose_data_list(data_path, metas_filename):
 
 def make_model(input, result, mask, reuse=False, use_slim=False):
     input = tf.reshape(input, [batch_size, xdim, ydim, zdim, n_pos+1])
-    result = tf.reshape(result, [batch_size, n_pos, 3])
-    mask = tf.reshape(mask, [batch_size, n_pos, 1])
+    result = tf.reshape(result, [batch_size, xdim, ydim, zdim, n_pos])
+    mask = tf.reshape(mask, [batch_size, xdim, ydim, zdim, n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
@@ -104,9 +104,15 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
     # Argument of depth image
-    dep_img = sio.loadmat(depth_list)['depthim_incolor']
+    try:
+        dep_img = sio.loadmat(depth_list)['depthim_incolor']
+    except:
+        print("The depth file is broken : {}".format(depth_list))
+        dep_img = np.zeros((1080, 1920))
+
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
-    dep_img = tl.prepro.drop(dep_img, keep=0.5) # TODO：可以继续添加不同程度的遮挡
+    dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
+    # TODO：可以继续添加不同程度的遮挡
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -115,7 +121,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     annos3d = np.array(annos3d) / 100.0 # 三维点坐标以厘米为单位
 
     # create voxel occupancy grid from the warped depth map
-    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim))
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
     # Argument of voxels and keypoints
@@ -135,9 +141,12 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
 
+    result_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), 3.0, voxel_coordsvis)
+    mask_vis = np.ones_like(result_3d)*voxel_coordsvis
+
     input_3d = np.array(input_3d, dtype=np.float32)
-    result_3d = np.array(voxel_coords3d, dtype=np.float32)
-    mask_vis = np.array(voxel_coordsvis, dtype=np.float32)
+    result_3d = np.array(result_3d, dtype=np.float32)
+    mask_vis = np.array(mask_vis, dtype=np.float32)
 
     return input_3d, result_3d, mask_vis
 
@@ -153,18 +162,14 @@ def _map_fn(depth_list, cams, anno2ds, anno3ds):
     return input_3d, result_3d, mask_vis
 
 
-def single_train(training_dataset):
+def train(training_dataset, epoch, n_step):
     ds = training_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
-    ds = ds.repeat(n_epoch)
     ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
     ds = ds.batch(batch_size)
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
-    # x_3d_ = head_net.input  # base_net input
-    # last_voxel = head_net.last_voxel  # base_net output
-    # voxels_ = head_net.voxels  # GT
     stage_losses = head_net.stage_losses
     l2_loss = head_net.l2_loss
 
@@ -183,7 +188,7 @@ def single_train(training_dataset):
 
         # restore pre-trained weights
         try:
-            tl.files.load_and_assign_npz_dict(sess=sess, name=os.path.join(model_path, 'voxelposenet-False.npz'))
+            tl.files.load_and_assign_npz_dict(sess=sess, name=os.path.join(model_path, 'voxelposenet.npz'))
         except:
             print("no pre-trained model")
 
@@ -206,12 +211,56 @@ def single_train(training_dataset):
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):
-                tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet' + str(step) + '.npz'), sess=sess)
+                tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet-'+str(epoch)+'-'+str(step)+'.npz'), sess=sess)
                 tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet.npz'), sess=sess)
             # training finished
             if step == n_step:
+                tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet'+str(epoch)+'.npz'), sess=sess)
                 tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet.npz'), sess=sess)
                 break
+
+
+def evaluate(evaluating_dataset, epoch, n_step):
+    ds = evaluating_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
+    ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
+    ds = ds.batch(batch_size)
+    ds = ds.prefetch(2)
+    iterator = ds.make_one_shot_iterator()
+    one_element = iterator.get_next()
+    head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
+    l2_loss = head_net.l2_loss
+
+    config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
+
+    # start evaluating
+    with tf.Session(config=config) as sess:
+        sess.run(tf.global_variables_initializer())
+
+        # restore pre-trained weights
+        try:
+            tl.files.load_and_assign_npz_dict(sess=sess, name=os.path.join(model_path, 'voxelposenet.npz'))
+        except:
+            print("no pre-trained model")
+
+        # evaluate all test files
+        step = 0
+        sum_loss = 0.0
+        invalid_count = 0
+        while True:
+            tic = time.time()
+            [_loss, _l2] = sess.run([head_loss, l2_loss])
+
+            step += 1
+            sum_loss += _loss
+            invalid_count += (1 if _loss == _l2 else 0)
+
+            print('Total loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
+            if step == n_step:
+                break
+
+        # evaluating finished
+        avg_loss = sum_loss / (n_step-invalid_count)
+        print('Sum average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
 
 
 if __name__ == '__main__':
@@ -239,17 +288,27 @@ if __name__ == '__main__':
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
         print("Total number of own images found:", len(sum_depths_file_list))
+    
+    from sklearn.model_selection import train_test_split
+    train_depths_list, eval_depths_list, \
+    train_cams_list, eval_cams_list, \
+    train_anno2ds_list, eval_anno2ds_list, \
+    train_anno3ds_list, eval_anno3ds_list = train_test_split(
+        sum_depths_file_list, sum_cams_list, sum_anno2ds_list, sum_anno3ds_list, test_size=0.2, random_state=42)
 
     # define data augmentation
-    def generator():
+    def train_ds_generator():
         """TF Dataset generator."""
-        for _input_depth, _calib_cam, _target_anno2d, _target_anno3d in zip(sum_depths_file_list, sum_cams_list, sum_anno2ds_list, sum_anno3ds_list):
-            yield  _input_depth.encode('utf-8'), cPickle.dumps(_calib_cam), cPickle.dumps(_target_anno2d), cPickle.dumps(_target_anno3d)
+        for _input_depth, _calib_cam, _target_anno2d, _target_anno3d in zip(train_depths_list, train_cams_list, train_anno2ds_list, train_anno3ds_list):
+            yield _input_depth.encode('utf-8'), cPickle.dumps(_calib_cam), cPickle.dumps(_target_anno2d), cPickle.dumps(_target_anno3d)
+    train_ds = tf.data.Dataset().from_generator(train_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
 
-    n_epoch = math.ceil(n_step / (len(sum_depths_file_list) / batch_size))
-    dataset = tf.data.Dataset().from_generator(generator, output_types=(tf.string, tf.string, tf.string, tf.string))
+    def eval_ds_generator():
+        """TF Dataset generator."""
+        for _input_depth, _calib_cam, _target_anno2d, _target_anno3d in zip(eval_depths_list, eval_cams_list, eval_anno2ds_list, eval_anno3ds_list):
+            yield _input_depth.encode('utf-8'), cPickle.dumps(_calib_cam), cPickle.dumps(_target_anno2d), cPickle.dumps(_target_anno3d)
+    eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
 
-    if config.TRAIN.train_mode == 'single':
-        single_train(dataset)
-    else:
-        raise Exception('Unknown training mode')
+    for epoch in range(1, n_epoch+1):
+        train(train_ds, epoch, len(train_depths_list)/2)
+        evaluate(eval_ds, epoch, len(eval_depths_list)/2)

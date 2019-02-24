@@ -36,15 +36,14 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 
 # FIXME: Don't use global variables.
 # define hyper-parameters for training
-train_stage = config.TRAIN.train_stage
 node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
-lr_decay_every_step = config.TRAIN.lr_decay_every_step
 n_step = config.TRAIN.n_step
 save_interval = config.TRAIN.save_interval
-weight_decay_factor = config.TRAIN.weight_decay_factor
 lr_init = config.TRAIN.lr_init
+lr_decay_interval = config.TRAIN.lr_decay_interval
 lr_decay_factor = config.TRAIN.lr_decay_factor
+weight_decay_factor = config.TRAIN.weight_decay_factor
 
 # FIXME: Don't use global variables.
 # define hyper-parameters for model
@@ -177,8 +176,8 @@ def single_train(training_dataset):
     stage_losses = head_net.stage_losses
     l2_loss = head_net.l2_loss
 
-    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_every_step: {}'.format(
-        n_step, batch_size, lr_init, lr_decay_every_step))
+    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
+        n_step, batch_size, lr_init, lr_decay_interval))
 
     lr_v = tf.Variable(lr_init, trainable=False, name='learning_rate')
     global_step = tf.Variable(1, trainable=False)
@@ -201,8 +200,8 @@ def single_train(training_dataset):
         while True:
             tic = time.time()
             step = sess.run(global_step)
-            if step != 0 and (step % lr_decay_every_step == 0):
-                new_lr_decay = lr_decay_factor**(step // lr_decay_every_step)
+            if step != 0 and (step % lr_decay_interval == 0):
+                new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
             [_, _loss, _stage_losses, _l2] = sess.run([train_op, head_loss, stage_losses, l2_loss])
