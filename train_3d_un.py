@@ -55,12 +55,12 @@ zdim = config.MODEL.zdim
 b_slim = config.MODEL.use_slim
 
 
-def get_pose_data_list(data_path, metas_filename):
+def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     """
     data_path : image and anno folder name
     """
     print("[x] Get pose data from {}".format(data_path))
-    data = PoseInfo(data_path, metas_filename)
+    data = PoseInfo(data_path, metas_filename, min_count, min_score)
     cams_list, depths_file_list, anno2ds_list, anno3ds_list = data.get_3d_data_list()
     if len(depths_file_list) != len(anno2ds_list) or len(anno3ds_list) != len(cams_list):
         raise Exception("number of images, cameras and annotations do not match")
@@ -107,7 +107,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     try:
         dep_img = sio.loadmat(depth_list)['depthim_incolor']
     except:
-        print("The depth file is broken : {}".format(depth_list))
+        print("[Except] The depth file is broken : ", depth_list)
         dep_img = np.zeros((1080, 1920))
 
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
@@ -166,11 +166,12 @@ def single_train(training_dataset):
     ds = training_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
     ds = ds.repeat(n_epoch)
     ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
-    ds = ds.batch(batch_size)  # TODO: consider using tf.contrib.map_and_batch
+    ds = ds.batch(batch_size)
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
+    # x_3d_ = head_net.input  # base_net input
     # last_voxel = head_net.last_voxel  # base_net output
     # voxels_ = head_net.voxels  # GT
     stage_losses = head_net.stage_losses
@@ -241,7 +242,7 @@ if __name__ == '__main__':
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if 'KINECTNODE' in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat')
+                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat', 9, 0.25)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)

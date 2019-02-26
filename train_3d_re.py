@@ -55,12 +55,12 @@ zdim = config.MODEL.zdim
 b_slim = config.MODEL.use_slim
 
 
-def get_pose_data_list(data_path, metas_filename):
+def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     """
     data_path : image and anno folder name
     """
     print("[x] Get pose data from {}".format(data_path))
-    data = PoseInfo(data_path, metas_filename)
+    data = PoseInfo(data_path, metas_filename, min_count, min_score)
     cams_list, depths_file_list, anno2ds_list, anno3ds_list = data.get_3d_data_list()
     if len(depths_file_list) != len(anno2ds_list) or len(anno3ds_list) != len(cams_list):
         raise Exception("number of images, cameras and annotations do not match")
@@ -72,7 +72,10 @@ def get_pose_data_list(data_path, metas_filename):
 def make_model(input, result, mask, reuse=False, use_slim=False):
     input = tf.reshape(input, [batch_size, xdim, ydim, zdim, n_pos+1])
     result = tf.reshape(result, [batch_size, n_pos, 3])
-    mask = tf.reshape(mask, [batch_size, n_pos, 1])
+    mask = tf.reshape(mask, [batch_size, n_pos])
+
+    grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+    grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
@@ -80,8 +83,15 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     losses = []
     stage_losses = []
 
-    for idx, voxel in enumerate(voxel_list):
-        loss = tf.nn.l2_loss((voxel.outputs - result) * mask)
+    for _, voxel in enumerate(voxel_list):
+        loss = 0.0
+        for idx in range(0, batch_size):
+            one_voxel = tf.exp(voxel.outputs[idx,:,:,:,:])
+            one_voxel = one_voxel / tf.reduce_sum(one_voxel, [0,1,2])
+            one_pred = tf.reduce_sum(one_voxel * grid, [1,2,3])
+            one_result = tf.transpose(result[idx,:,:])
+            one_mask = mask[idx,:]
+            loss += tf.nn.l2_loss((one_pred - one_result) * one_mask)
         losses.append(loss)
         stage_losses.append(loss / batch_size)
 
@@ -104,9 +114,15 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
     # Argument of depth image
-    dep_img = sio.loadmat(depth_list)['depthim_incolor']
+    try:
+        dep_img = sio.loadmat(depth_list)['depthim_incolor']
+    except:
+        print("[Except] The depth file is broken : ", depth_list)
+        dep_img = np.zeros((1080, 1920))
+
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
-    dep_img = tl.prepro.drop(dep_img, keep=0.5) # TODO：可以继续添加不同程度的遮挡
+    dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
+    # TODO：可以继续添加不同程度的遮挡
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -115,7 +131,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     annos3d = np.array(annos3d) / 100.0 # 三维点坐标以厘米为单位
 
     # create voxel occupancy grid from the warped depth map
-    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim))
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
     # Argument of voxels and keypoints
@@ -147,8 +163,8 @@ def _map_fn(depth_list, cams, anno2ds, anno3ds):
     input_3d, result_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32])
 
     input_3d = tf.reshape(input_3d, [xdim, ydim, zdim, n_pos+1])
-    result_3d = tf.reshape(result_3d, [xdim, ydim, zdim, n_pos])
-    mask_vis = tf.reshape(mask_vis, [xdim, ydim, zdim, n_pos])
+    result_3d = tf.reshape(result_3d, [n_pos, 3])
+    mask_vis = tf.reshape(mask_vis, [n_pos])
 
     return input_3d, result_3d, mask_vis
 
@@ -233,7 +249,7 @@ if __name__ == '__main__':
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if 'KINECTNODE' in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat')
+                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat', 9, 0.25)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)

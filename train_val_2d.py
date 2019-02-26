@@ -54,12 +54,12 @@ hout = config.MODEL.hout
 wout = config.MODEL.wout
 
 
-def get_pose_data_list(data_path, metas_filename):
+def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     """
     data_path : image and anno folder name
     """
     print("[x] Get pose data from {}".format(data_path))
-    data = PoseInfo(data_path, metas_filename)
+    data = PoseInfo(data_path, metas_filename, min_count, min_score)
     rgbs_file_list, depths_file_list, anno2ds_list = data.get_2d_data_list()
     if len(rgbs_file_list) != len(anno2ds_list) or len(depths_file_list) != len(anno2ds_list):
         raise Exception("number of images, cameras and annotations do not match")
@@ -232,12 +232,11 @@ def train(training_dataset, epoch, n_step):
 def evaluate(evaluating_dataset, epoch, n_step):
     ds = evaluating_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
     ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
-    ds = ds.batch(batch_size)  # TODO: consider using tf.contrib.map_and_batch
+    ds = ds.batch(batch_size)
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
-    base_net, base_loss = make_model(*one_element, is_train=True, reuse=False)
-    l2_loss = base_net.l2_loss
+    _, base_loss = make_model(*one_element, is_train=True, reuse=False)
 
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 
@@ -256,7 +255,7 @@ def evaluate(evaluating_dataset, epoch, n_step):
         step = 1
         while True:
             tic = time.time()
-            [_loss, _l2] = sess.run([base_loss, l2_loss])
+            _loss = sess.run(base_loss)
             sum_loss += _loss
             print('Total Loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
             if step == n_step:
@@ -287,7 +286,7 @@ if __name__ == '__main__':
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if 'KINECTNODE' in folder:
-                    _rgbs_file_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder,'meta.mat')
+                    _rgbs_file_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder,'meta.mat', 5, 0.25)
                     sum_rgbs_file_list.extend(_rgbs_file_list)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
@@ -298,6 +297,7 @@ if __name__ == '__main__':
     train_depths_list, eval_depths_list, \
     train_anno2ds_list, eval_anno2ds_list = train_test_split(
         sum_rgbs_file_list, sum_depths_file_list, sum_anno2ds_list, test_size=0.2, random_state=42)
+    print("{} images for training, {} images for evalutation.".format(len(train_rgbs_list), len(eval_rgbs_list)))
 
     # define data augmentation
     def train_ds_generator():
@@ -313,5 +313,7 @@ if __name__ == '__main__':
     eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
     for epoch in range(n_epoch):
-        train(train_ds, epoch, len(train_rgbs_list)/batch_size)
-        evaluate(eval_ds, epoch, len(eval_rgbs_list)/batch_size)
+        tf.reset_default_graph()
+        train(train_ds, epoch, (int)(len(train_rgbs_list)/batch_size))
+        tf.reset_default_graph()
+        evaluate(eval_ds, epoch, (int)(len(eval_rgbs_list)/batch_size))

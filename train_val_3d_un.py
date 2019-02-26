@@ -55,12 +55,12 @@ zdim = config.MODEL.zdim
 b_slim = config.MODEL.use_slim
 
 
-def get_pose_data_list(data_path, metas_filename):
+def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     """
     data_path : image and anno folder name
     """
     print("[x] Get pose data from {}".format(data_path))
-    data = PoseInfo(data_path, metas_filename)
+    data = PoseInfo(data_path, metas_filename, min_count, min_score)
     cams_list, depths_file_list, anno2ds_list, anno3ds_list = data.get_3d_data_list()
     if len(depths_file_list) != len(anno2ds_list) or len(anno3ds_list) != len(cams_list):
         raise Exception("number of images, cameras and annotations do not match")
@@ -107,7 +107,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     try:
         dep_img = sio.loadmat(depth_list)['depthim_incolor']
     except:
-        print("The depth file is broken : {}".format(depth_list))
+        print("[Except] The depth file is broken : ", depth_list)
         dep_img = np.zeros((1080, 1920))
 
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
@@ -173,10 +173,11 @@ def train(training_dataset, epoch, n_step):
     stage_losses = head_net.stage_losses
     l2_loss = head_net.l2_loss
 
-    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
-        n_step, batch_size, lr_init, lr_decay_interval))
+    new_lr_decay = lr_decay_factor**((epoch-1)*n_step // lr_decay_interval)
+    print('Start - epoch: {} n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
+        epoch, n_step, batch_size, lr_init*new_lr_decay, lr_decay_interval))
 
-    lr_v = tf.Variable(lr_init, trainable=False, name='learning_rate')
+    lr_v = tf.Variable(lr_init * new_lr_decay, trainable=False, name='learning_rate')
     global_step = tf.Variable(1, trainable=False)
     train_op = tf.train.AdamOptimizer(lr_v).minimize(head_loss, global_step=global_step)
 
@@ -198,13 +199,13 @@ def train(training_dataset, epoch, n_step):
             tic = time.time()
             step = sess.run(global_step)
             if step != 0 and (step % lr_decay_interval == 0):
-                new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
+                new_lr_decay = lr_decay_factor**(((epoch-1)*n_step + step) // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
             [_, _loss, _stage_losses, _l2] = sess.run([train_op, head_loss, stage_losses, l2_loss])
 
             lr = sess.run(lr_v)
-            print('Total Loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
+            print('Training loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
             for ix, sl in enumerate(_stage_losses):
                 print('Network#', ix, 'Loss:', sl)
@@ -215,7 +216,7 @@ def train(training_dataset, epoch, n_step):
                 tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet.npz'), sess=sess)
             # training finished
             if step == n_step:
-                tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet'+str(epoch)+'.npz'), sess=sess)
+                tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet-'+str(epoch)+'.npz'), sess=sess)
                 tl.files.save_npz_dict(head_net.all_params, os.path.join(model_path, 'voxelposenet.npz'), sess=sess)
                 break
 
@@ -227,7 +228,7 @@ def evaluate(evaluating_dataset, epoch, n_step):
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
-    head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
+    head_net, head_loss = make_model(*one_element, reuse=True, use_slim=b_slim)
     l2_loss = head_net.l2_loss
 
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
@@ -254,13 +255,13 @@ def evaluate(evaluating_dataset, epoch, n_step):
             sum_loss += _loss
             invalid_count += (1 if _loss == _l2 else 0)
 
-            print('Total loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
+            print('Validation loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
             if step == n_step:
                 break
 
         # evaluating finished
         avg_loss = sum_loss / (n_step-invalid_count)
-        print('Sum average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
+        print('Total validation average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
 
 
 if __name__ == '__main__':
@@ -282,12 +283,12 @@ if __name__ == '__main__':
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if 'KINECTNODE' in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat')
+                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat', 9, 0.25)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
-        print("Total number of own images found:", len(sum_depths_file_list))
+        print("Total number of own samples found:", len(sum_depths_file_list))
     
     from sklearn.model_selection import train_test_split
     train_depths_list, eval_depths_list, \
@@ -295,6 +296,7 @@ if __name__ == '__main__':
     train_anno2ds_list, eval_anno2ds_list, \
     train_anno3ds_list, eval_anno3ds_list = train_test_split(
         sum_depths_file_list, sum_cams_list, sum_anno2ds_list, sum_anno3ds_list, test_size=0.2, random_state=42)
+    print("{} samples for training, {} samples for evalutation.".format(len(train_depths_list), len(eval_depths_list)))
 
     # define data augmentation
     def train_ds_generator():
@@ -310,5 +312,7 @@ if __name__ == '__main__':
     eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
 
     for epoch in range(1, n_epoch+1):
-        train(train_ds, epoch, len(train_depths_list)/2)
-        evaluate(eval_ds, epoch, len(eval_depths_list)/2)
+        tf.reset_default_graph()
+        train(train_ds, epoch, len(train_depths_list)//batch_size)
+        tf.reset_default_graph()
+        evaluate(eval_ds, epoch, len(eval_depths_list)//batch_size)

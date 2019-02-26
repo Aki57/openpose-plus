@@ -24,7 +24,7 @@ def get_files(data_path):
         for folder in folder_list:
             if 'KINECTNODE' in folder:
                 print("[x] Get pose data from {}".format(folder))
-                _cams_list, _rgbs_list, _depths_list = PoseInfo(folder, 'meta.mat').get_test_data_list()
+                _cams_list, _rgbs_list, _depths_list = PoseInfo(folder, 'meta.mat', 9, 0.25).get_test_data_list()
                 sum_cams_list.extend(_cams_list)
                 sum_rgbs_list.extend(_rgbs_list)
                 sum_depths_list.extend(_depths_list)
@@ -71,11 +71,6 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
 
 
 def main():
-    _rgb_files, _dep_files, _cam_list = get_files('data/cmu_dataset')
-    rgb_files = _rgb_files # list of str, default='', help='comma separate list of image filenames', required=True
-    dep_files = _dep_files # list of str, default='', help='comma separate list of depth filenames', required=True
-    cam_list = _cam_list # list of str, default='', help='comma separate list of cam infos', required=True
-
     base_npz_path = 'models/openposenet.npz' # str, default='', help='path to npz', required=True
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
     head_npz_path = 'models/voxelposenet15000.npz' # str, default='', help='path to npz', required=True
@@ -84,9 +79,10 @@ def main():
     repeat = 1 # int, default=1, help='repeat the images for n times for profiling.'
     limit = 1 # int, default=-1, help='max number of images.'
 
-    rgb_files = (rgb_files * repeat)[:limit]
-    dep_files = (dep_files * repeat)[:limit]
-    cam_list = (cam_list * repeat)[:limit]
+    _rgb_files, _dep_files, _cam_list = get_files('data/cmu_dataset')
+    rgb_files = (_rgb_files * repeat)[:limit] # list of str, default='', help='comma separate list of image filenames', required=True
+    dep_files = (_dep_files * repeat)[:limit] # list of str, default='', help='comma separate list of depth filenames', required=True
+    cam_list = (_cam_list * repeat)[:limit] # list of str, default='', help='comma separate list of cam infos', required=True
 
     inference(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_list, plot)
 

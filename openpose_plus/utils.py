@@ -66,11 +66,9 @@ class CmuMeta:
             new_joints2d.append((-1000, -1000))
             new_joints3d.append((0, 0, -1000))
 
+            # min threshold for joint count
             if valid_count < min_count:
-                print('[skip] valid joints is less than {}, skip body({}/{}).'.format(min_count, bodyidx, len(scores)))
                 continue
-            if len(new_joints2d) != 19:
-                print('The Length of joints list should be 0 or 19 but actually:', len(new_joints2d))
 
             self.joint2d_list.append(new_joints2d)
             self.joint3d_list.append(new_joints3d)
@@ -79,11 +77,17 @@ class CmuMeta:
 class PoseInfo:
     """ Use CMU for 3d pose estimation """
 
-    def __init__(self, data_base_dir, metas_filename):
+    def __init__(self, data_base_dir, metas_filename, min_count, min_score):
         self.base_dir = data_base_dir
         self.metas_path = os.path.join(self.base_dir, metas_filename)
         self.metas = []
-        self.get_image_annos()
+        self.min_count = min_count
+        self.min_score = min_score
+
+        if not os.path.exists(self.metas_path):
+            print("[skip] meta.mat is not found: {}".format(self.base_dir))
+        else:
+            self.get_image_annos()
 
     def get_image_annos(self):
         """
@@ -117,11 +121,8 @@ class PoseInfo:
             annos3d = sio.loadmat(anno_path)['joints3d'][0]
             scores = sio.loadmat(anno_path)['scores'][0]
 
-            meta = CmuMeta(rgb_path, depth_path, annos2d, annos3d, scores, 5, 0.2)
-            if(len(meta.joint2d_list)==0):
-                print("[skip] valid body is 0: {}".format(anno_path))
-                continue
-            else:
+            meta = CmuMeta(rgb_path, depth_path, annos2d, annos3d, scores, self.min_count, self.min_score)
+            if len(meta.joint2d_list) is not 0:
                 self.metas.append(meta)
 
         print("Overall get {} valid pose images from {}".format(len(self.metas), self.base_dir))
