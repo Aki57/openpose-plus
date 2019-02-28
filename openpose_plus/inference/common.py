@@ -14,7 +14,7 @@ regularizer_dsconv = 0.0004
 batchnorm_fused = True
 activation_fn = tf.nn.relu
 
-
+# actually the output order of Openpose
 class CocoPart(Enum):
     Nose = 0
     Neck = 1
@@ -36,80 +36,8 @@ class CocoPart(Enum):
     LEar = 17
     Background = 18
 
-
-class MPIIPart(Enum):
-    RAnkle = 0
-    RKnee = 1
-    RHip = 2
-    LHip = 3
-    LKnee = 4
-    LAnkle = 5
-    RWrist = 6
-    RElbow = 7
-    RShoulder = 8
-    LShoulder = 9
-    LElbow = 10
-    LWrist = 11
-    Neck = 12
-    Head = 13
-
-    @staticmethod
-    def from_coco(human):
-        # t = {
-        #     MPIIPart.RAnkle: CocoPart.RAnkle,
-        #     MPIIPart.RKnee: CocoPart.RKnee,
-        #     MPIIPart.RHip: CocoPart.RHip,
-        #     MPIIPart.LHip: CocoPart.LHip,
-        #     MPIIPart.LKnee: CocoPart.LKnee,
-        #     MPIIPart.LAnkle: CocoPart.LAnkle,
-        #     MPIIPart.RWrist: CocoPart.RWrist,
-        #     MPIIPart.RElbow: CocoPart.RElbow,
-        #     MPIIPart.RShoulder: CocoPart.RShoulder,
-        #     MPIIPart.LShoulder: CocoPart.LShoulder,
-        #     MPIIPart.LElbow: CocoPart.LElbow,
-        #     MPIIPart.LWrist: CocoPart.LWrist,
-        #     MPIIPart.Neck: CocoPart.Neck,
-        #     MPIIPart.Nose: CocoPart.Nose,
-        # }
-
-        t = [
-            (MPIIPart.Head, CocoPart.Nose),
-            (MPIIPart.Neck, CocoPart.Neck),
-            (MPIIPart.RShoulder, CocoPart.RShoulder),
-            (MPIIPart.RElbow, CocoPart.RElbow),
-            (MPIIPart.RWrist, CocoPart.RWrist),
-            (MPIIPart.LShoulder, CocoPart.LShoulder),
-            (MPIIPart.LElbow, CocoPart.LElbow),
-            (MPIIPart.LWrist, CocoPart.LWrist),
-            (MPIIPart.RHip, CocoPart.RHip),
-            (MPIIPart.RKnee, CocoPart.RKnee),
-            (MPIIPart.RAnkle, CocoPart.RAnkle),
-            (MPIIPart.LHip, CocoPart.LHip),
-            (MPIIPart.LKnee, CocoPart.LKnee),
-            (MPIIPart.LAnkle, CocoPart.LAnkle),
-        ]
-
-        pose_2d_mpii = []
-        visibilty = []
-        for mpi, coco in t:
-            if coco.value not in human.body_parts.keys():
-                pose_2d_mpii.append((0, 0))
-                visibilty.append(False)
-                continue
-            pose_2d_mpii.append((human.body_parts[coco.value].x, human.body_parts[coco.value].y))
-            visibilty.append(True)
-        return pose_2d_mpii, visibilty
-
-
-CocoPairs = [(1, 2), (1, 5), (2, 3), (3, 4), (5, 6), (6, 7), (1, 8), (8, 9), (9, 10), (1, 11), (11, 12), (12, 13), (1,
-                                                                                                                    0),
-             (0, 14), (14, 16), (0, 15), (15, 17), (2, 16), (5, 17)]  # = 19
-CocoPairsRender = CocoPairs[:-2]
-# CocoPairsNetwork = [
-#     (12, 13), (20, 21), (14, 15), (16, 17), (22, 23), (24, 25), (0, 1), (2, 3), (4, 5),
-#     (6, 7), (8, 9), (10, 11), (28, 29), (30, 31), (34, 35), (32, 33), (36, 37), (18, 19), (26, 27)
-#  ]  # = 19
-
+CocoPairs = [(1, 2), (1, 5), (2, 3), (3, 4), (5, 6), (6, 7), (1, 8), (8, 9), (9, 10), (1, 11), (11, 12), (12, 13), 
+            (1, 0), (0, 14), (14, 16), (0, 15), (15, 17)]  # = 17
 CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
               [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255],
               [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
@@ -139,10 +67,10 @@ def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last')
     return input_2d / 255.0, init_h, init_w
 
 
-def read_3dfiles(dep_path, cam_info, keypoints2d, width, height, depth, data_format='channels_last'):
+def read_3dfiles(dep_path, cam_info, coords2d, coordsvis, width, height, depth, data_format='channels_last'):
     """Read image file and resize to network input size."""
     dep_img = sio.loadmat(dep_path)['depthim_incolor'] / 1000.0
-    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, keypoints2d, (width, height, depth), f=1.2)
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (width, height, depth), 1.2, coordsvis)
     voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), 3.0, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, depth, 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
@@ -151,14 +79,16 @@ def read_3dfiles(dep_path, cam_info, keypoints2d, width, height, depth, data_for
 
 
 def tranform_keypoints2d(body, width, height, kp_score_thresh=0.25):
-    coords_2d = np.ones((18, 2)) * -1000
-    coords_2d_conf = np.zeros((18))
+    coords2d = np.zeros((18, 2))
+    coords2d_conf = np.zeros((18))
+    coords2d_vis = coords2d_conf > 0.0
     for i in body.keys():
-        coords_2d_conf[i] = body[i].score
-        if coords_2d_conf[i] > kp_score_thresh:
-            coords_2d[i,0] = body[i].x * width
-            coords_2d[i,1] = body[i].y * height
-    return coords_2d, coords_2d_conf
+        coords2d_conf[i] = body[i].score
+        coords2d[i,0] = body[i].x * width
+        coords2d[i,1] = body[i].y * height
+        if coords2d_conf[i] > kp_score_thresh:
+            coords2d_vis[i] = True
+    return coords2d, coords2d_conf, coords2d_vis
 
 
 def get_sample_images(w, h):
@@ -256,7 +186,7 @@ def draw_humans(npimg, humans):
             cv2.circle(npimg, center, 3, CocoColors[i], thickness=3, lineType=8, shift=0)
 
         # draw line
-        for pair_order, pair in enumerate(CocoPairsRender):
+        for pair_order, pair in enumerate(CocoPairs):
             if pair[0] not in human.body_parts.keys() or pair[1] not in human.body_parts.keys():
                 continue
             cv2.line(npimg, centers[pair[0]], centers[pair[1]], CocoColors[pair_order], 3)
@@ -291,44 +221,60 @@ def plot_humans(image, heatMat, pafMat, humans, name):
     plt.colorbar()
     mkpath('vis')
     plt.savefig('vis/result-%s.png' % name)
+    plt.show()
 
 
-def plot_3d_person(rgb_path, dep_path, coords3d, cam, idx=0):
-    import scipy.io as sio
-    import numpy as np
-    import cv2
+def plot_3d_person(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
 
+    if coordsvis is None:
+        coords3d = np.array(coords3d)/100.0
+        coordsvis = np.ones_like(coords3d[:,0], dtype=np.bool)
+
     rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
     dep_img = sio.loadmat(dep_path)['depthim_incolor']
-    coords2d_proj = cam.project(coords3d)
+    coords2d_proj = cam.project(coords3d[coordsvis,:])
 
-    plt.close()
-    plt.subplot(3,1,1)
+    # 2d display for 3d body projecttion on Kinect frame
+    plt.figure(figsize=[9, 9])
+    plt.subplot(2,1,1)
     plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
     plt.imshow(rgb_img)
     plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], '.')
     plt.draw()
     
-    plt.subplot(3,1,2)
+    plt.subplot(2,1,2)
     plt.title('3D Body Projection on Kinect-Depth ({0})'.format(idx))
     plt.imshow(dep_img)
     plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
     plt.draw()
 
-    ax = plt.subplot(3,1,3, projection='3d')
-    ax.scatter(coords3d[:,0], coords3d[:,1], coords3d[:,2], 'g')  # 绘制数据点
-    for pair in np.array([[1, 2], [2, 3], [3, 4],  # right arm
-                        [1, 8], [8, 9], [9, 10],  # right leg
-                        [1, 5], [5, 6], [6, 7],  # left arm
-                        [1, 11], [11, 12], [12, 13],  # left leg
-                        # [1, 0], [2, 16], [0, 14], [14, 16], [0, 15], [15, 17], [5, 17]
-                        ]):  # head
-        ax.plot(coords3d[pair,0], coords3d[pair,1], coords3d[pair,2], linewidth=2)
-    ax.set_zlabel('Depth')  # 坐标轴
-    ax.set_ylabel('Height')
+    # 3d display for body joints
+    plt.figure(figsize=[8, 8])
+    ax = plt.subplot(111, projection='3d')
+    ax.scatter(coords3d[:,0], coords3d[:,2], coords3d[:,1], 'g')  # 绘制数据点
+    for pair in CocoPairs:
+        if coordsvis[pair[0]] and coordsvis[pair[1]]:
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
+
+    # stable range of sight
+    axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
+    if coordsvis[1] == True: # Check if root keypoint is visible
+        axis_range = np.array([[-1.1,1.8,-1.1], [1.1,-0.4,1.1]])
+        axis_range += coords3d[1,:]
+    elif coordsvis[8] == True: # if not try R-hip
+        axis_range += coords3d[8,:]
+    elif coordsvis[11] == True: # if not try L-hip
+        axis_range += coords3d[11,:]
+    else:
+        axis_range += np.mean(coords3d, axis=0)
+    ax.set_xlim3d(axis_range[:,0])
+    ax.set_ylim3d(axis_range[:,2])
+    ax.set_zlim3d(axis_range[:,1])
     ax.set_xlabel('Width')
+    ax.set_ylabel('Depth')
+    ax.set_zlabel('Height')  # 坐标轴
     plt.draw()
 
     plt.show()

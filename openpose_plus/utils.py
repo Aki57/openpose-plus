@@ -16,10 +16,27 @@ if config.TRAIN.train_stage == '2d':
 
 ## read cmu data
 class CmuMeta:
-    """ Be used in PoseInfo. """
-    limb = list(
-        zip([2, 9, 10, 2, 12, 13, 2, 3, 4, 3, 2, 6, 7, 6, 2, 1, 1, 15, 16],
-            [9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18]))
+    """ Be used in PoseInfo. 
+        Neck = 0
+        Nose = 1
+        BodyCenter = 2
+        LShoulder = 3
+        LElbow = 4
+        LWrist = 5
+        LHip = 6
+        LKnee = 7
+        LAnkle = 8
+        RShoulder = 9
+        RElbow = 10
+        RWrist = 11
+        RHip = 12
+        RKnee = 13
+        RAnkle = 14
+        LEye = 15
+        LEar = 16
+        REye = 17
+        REar = 18
+    """
 
     def __init__(self, rgb_url, depth_url, annos2d, annos3d, scores, min_count=5, min_score=0.5):
         self.rgb_url = rgb_url
@@ -27,40 +44,27 @@ class CmuMeta:
         self.joint2d_list = []
         self.joint3d_list = []
         
-        # 对原 COCO 数据集的转换 其中第二位之所以不一样是为了计算 Neck 等于左右 shoulder 的中点
-        transform = list(
-            zip([1, 6, 7, 9, 11, 6, 8, 10, 13, 15, 17, 12, 14, 16, 3, 2, 5, 4],
-                [1, 7, 7, 9, 11, 6, 8, 10, 13, 15, 17, 12, 14, 16, 3, 2, 5, 4]))
-        # 检查关节点是否出界
-        def checkOutOfImage(joint):
-            u_min, v_min, u_max, v_max = (0, 0, 1920, 1080)
-            return joint[0] < u_min or joint[0] > u_max or joint[1] < v_min or joint[1] > v_max
+        # 对CMU数据集的转换
+        transform = [1, 0, 9, 10, 11, 3, 4, 5, 12, 13, 14, 6, 7, 8, 17, 15, 18, 16]
 
         for bodyidx in range(len(scores)):
             p2d = annos2d[bodyidx]
             p3d = annos3d[bodyidx]
-            conf = scores[bodyidx]
+            score = scores[bodyidx]
 
             new_joints2d = []
             new_joints3d = []
 
             valid_count = 0
 
-            for idx1, idx2 in transform:
-                conf1 = conf[idx1 - 1]
-                conf2 = conf[idx2 - 1]
-                j2d1 = p2d[idx1 - 1]
-                j2d2 = p2d[idx2 - 1]
-                j3d1 = p3d[idx1 - 1]
-                j3d2 = p3d[idx2 - 1]
-
-                if conf1 < min_score or conf2 < min_score or checkOutOfImage(j2d1) or checkOutOfImage(j2d2):
+            for idx in transform:
+                if score[idx] >= min_score or p2d[idx][0] in range(0, 1920) or p2d[idx][1] in range(0, 1080):
+                    valid_count = valid_count + 1
+                    new_joints2d.append(p2d[idx])
+                    new_joints3d.append(p3d[idx])
+                else:
                     new_joints2d.append((-1000, -1000))
                     new_joints3d.append((0, 0, -1000))
-                else:
-                    valid_count = valid_count + 1
-                    new_joints2d.append(((j2d1[0] + j2d2[0]) / 2, (j2d1[1] + j2d2[1]) / 2))
-                    new_joints3d.append(((j3d1[0] + j3d2[0]) / 2, (j3d1[1] + j3d2[1]) / 2, (j3d1[2] + j3d2[2]) / 2))
 
             # for background
             new_joints2d.append((-1000, -1000))
@@ -122,7 +126,7 @@ class PoseInfo:
             scores = sio.loadmat(anno_path)['scores'][0]
 
             meta = CmuMeta(rgb_path, depth_path, annos2d, annos3d, scores, self.min_count, self.min_score)
-            if len(meta.joint2d_list) is not 0:
+            if len(meta.joint2d_list) != 0:
                 self.metas.append(meta)
 
         print("Overall get {} valid pose images from {}".format(len(self.metas), self.base_dir))
@@ -144,6 +148,15 @@ class PoseInfo:
                 joint2d_list.append(joints2d)
                 joint3d_list.append(joints3d)
         return cam_list, dep_list, joint2d_list, joint3d_list
+
+    def get_val_data_list(self):
+        cam_list, rgb_list, dep_list, joint3d_list = [], [], [], []
+        for meta in self.metas:
+            cam_list.append(self.cam_calib)
+            rgb_list.append(meta.rgb_url)
+            dep_list.append(meta.depth_url)
+            joint3d_list.append(meta.joint3d_list)
+        return cam_list, rgb_list, dep_list, joint3d_list
 
     def get_test_data_list(self):
         cam_list, rgb_list, dep_list = [], [], []
@@ -273,11 +286,12 @@ def _voxelize(cam, depth_warped, mask, voxel_root, grid_size, grid_size_m, f=1.0
 
     return voxel_grid, trafo_params
 
-def create_voxelgrid(cam, depth_warped, coords2d, grid_size, f=1.0):
+def create_voxelgrid(cam, depth_warped, coords2d, grid_size, f=1.0, coordsvis=None):
     """ Creates a voxelgrid from given input. """
     cam = Camera(cam['K'], cam['distCoef'])
     mask = np.logical_not(depth_warped == 0.0)
-    coordsvis = (coords2d != np.array([-1000, -1000]))[:,0]
+    if coordsvis is None:
+        coordsvis = (coords2d != np.array([-1000, -1000]))[:,0]
     
     grid_size_m = np.array([[-1.1, -1.1, -1.1], [1.1, 1.1, 1.1]]) #symmetric grid
 
