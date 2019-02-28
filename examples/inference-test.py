@@ -55,7 +55,7 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
             input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, x_size, y_size, z_size), 'read_3dfiles')
             coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
             coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
-            coords3d_pred_proj = Camera(cam_info['K'], cam_info['distCoef']).backproject(coords2d, coords3d_pred[:, -1])
+            coords3d_pred_proj = Camera(cam_info['K'], cam_info['distCoef']).unproject(coords2d, coords3d_pred[:, -1])
 
             cond = coords2d_conf > coords3d_conf  # use backproj only when 2d was visible and 2d/3d roughly matches
             coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]

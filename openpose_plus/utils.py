@@ -171,22 +171,52 @@ class Camera:
     def __init__(self, K, distCoef):
         self.K = K
         self.K_inv = np.linalg.inv(K)
-        self.Kd = distCoef
+        self.D = distCoef
 
     def project(self, xyz_coords):
         """ Projects a (x, y, z) tuple of world coords into the image frame. """
+        # scaling by z coords
         xyz_coords = np.reshape(xyz_coords, [-1, 3])
-        uv_coords = np.matmul(xyz_coords, np.transpose(self.K, [1, 0]))
+        xy_coords = self._from_hom(xyz_coords)
+
+        # distortion
+        x, y = xy_coords[:,0], xy_coords[:,1]
+        r2 = x*x + y*y
+        d = self.D
+        deltaR = 1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2
+        deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
+        deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
+        xy_coords[:,0] = deltaR * x + deltaX
+        xy_coords[:,1] = deltaR * y + deltaY
+
+        # normalized points and mapping
+        xy_coords_h = self._to_hom(xy_coords)
+        uv_coords = np.matmul(xy_coords_h, np.transpose(self.K, [1, 0]))
         return self._from_hom(uv_coords)
 
-    def backproject(self, uv_coords, z_coords):
+    def unproject(self, uv_coords, z_coords):
         """ Projects a (x, y, z) tuple of world coords into the world frame. """
-        uv_coords = np.reshape(uv_coords, [-1, 2])
-        z_coords = np.reshape(z_coords, [-1, 1])
+        # normalized points and mapping
+        uv_coords_h = self._to_hom(np.reshape(uv_coords, [-1, 2]))
+        xy_coords_h = np.matmul(uv_coords_h, np.transpose(self.K_inv, [1, 0]))
 
-        uv_coords_h = self._to_hom(uv_coords)
+        # undistortion iterations
+        x0, y0 = xy_coords_h[:,0], xy_coords_h[:,1]
+        x, y = x0, y0
+        d = self.D
+        for i in range(5):
+            r2 = x*x + y*y
+            deltaR = 1 / (1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2)
+            deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
+            deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
+            x = (x0 - deltaX)*deltaR
+            y = (y0 - deltaY)*deltaR
+        xy_coords_h[:,0] = x
+        xy_coords_h[:,1] = y
+
+        # scaling by z coords
         z_coords = np.reshape(z_coords, [-1, 1])
-        xyz_coords = z_coords * np.matmul(uv_coords_h, np.transpose(self.K_inv, [1, 0]))
+        xyz_coords = z_coords * xy_coords_h
         return xyz_coords
 
     @staticmethod
@@ -258,7 +288,7 @@ def _voxelize(cam, depth_warped, mask, voxel_root, grid_size, grid_size_m, f=1.0
     w_vec = np.reshape(W[mask], [-1])
     uv_vec = np.stack([w_vec, h_vec], 1)
     z_vec = np.reshape(depth_warped[mask], [-1])
-    pcl_xyz = cam.backproject(uv_vec, z_vec)
+    pcl_xyz = cam.unproject(uv_vec, z_vec)
 
     # 2. Scale down to voxel size and quantize
     pcl_xyz_rel = pcl_xyz - voxel_root
@@ -314,13 +344,13 @@ def create_voxelgrid(cam, depth_warped, coords2d, grid_size, f=1.0, coordsvis=No
     grid_size_m *= f # TODO：焦距究竟多少
 
     grid_size = np.reshape(grid_size, [1, 3]).astype('int32')
-    root_xyz = cam.backproject(coord2d_root, z_value)  # neck world coordinates
+    root_xyz = cam.unproject(coord2d_root, z_value)  # neck world coordinates
 
     # get a voxel located at the root_xyz
     voxel_grid, trafo_params = _voxelize(cam, depth_warped, mask, root_xyz, grid_size, grid_size_m, f)
 
     # calculate pseudo 2D coordinates at neck depth in voxel coords
-    pseudo_coord3d = cam.backproject(coords2d, z_value)  # project all points onto the neck depth
+    pseudo_coord3d = cam.unproject(coords2d, z_value)  # project all points onto the neck depth
     pseudo_coord3d = (pseudo_coord3d - trafo_params['root']) / trafo_params['scale']
     voxel_coords2d = pseudo_coord3d[:, :2]
 
