@@ -80,7 +80,7 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     losses = []
     stage_losses = []
 
-    for idx, voxel in enumerate(voxel_list):
+    for _, voxel in enumerate(voxel_list):
         loss = tf.nn.l2_loss((voxel.outputs - result) * mask)
         losses.append(loss)
         stage_losses.append(loss / batch_size)

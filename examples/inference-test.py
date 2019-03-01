@@ -10,7 +10,7 @@ from easydict import EasyDict as edict
 
 sys.path.append('.')
 
-from openpose_plus.inference.common import measure, plot_humans, plot_3d_person, read_2dfiles, read_3dfiles, tranform_keypoints2d
+from openpose_plus.inference.common import measure, plot_humans, plot_human3d, read_2dfiles, read_3dfiles, tranform_keypoints2d
 from openpose_plus.inference.estimator import TfPoseEstimator, Pose3DEstimator
 from openpose_plus.models import get_base_model, get_head_model
 from openpose_plus.utils import Camera, PoseInfo, create_voxelgrid, get_kp_heatmap
@@ -49,7 +49,6 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
         if plot:
             plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
 
-        coords_xyz, coords_xyz_conf = list(), list()
         for h in humans:
             coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(h.body_parts, init_w, init_h)
             input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, x_size, y_size, z_size), 'read_3dfiles')
@@ -61,10 +60,7 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
             coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]
             coords3d_conf[cond] = coords2d_conf[cond]
             if plot:
-                plot_3d_person(rgb_name, dep_name, coords3d_pred, coords2d_vis, Camera(cam_info['K'], cam_info['distCoef']), idx)
-
-            coords_xyz.append(coords3d_pred)
-            coords_xyz_conf.append(coords3d_conf)
+                plot_human3d(rgb_name, dep_name, coords3d_pred, Camera(cam_info['K'], cam_info['distCoef']), idx, coords2d_vis)
 
     mean = (time.time() - time0) / len(rgb_files)
     print('inference all took: %f, mean: %f, FPS: %f' % (time.time() - time0, mean, 1.0 / mean))

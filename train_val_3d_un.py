@@ -80,7 +80,7 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     losses = []
     stage_losses = []
 
-    for idx, voxel in enumerate(voxel_list):
+    for _, voxel in enumerate(voxel_list):
         loss = tf.nn.l2_loss((voxel.outputs - result) * mask)
         losses.append(loss)
         stage_losses.append(loss / batch_size)
@@ -288,6 +288,11 @@ if __name__ == '__main__':
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
+        # 取1/10样本训练验证有效性
+        sum_depths_file_list = sum_depths_file_list[::10]
+        sum_cams_list = sum_cams_list[::10]
+        sum_anno2ds_list = sum_anno2ds_list[::10]
+        sum_anno3ds_list = sum_anno3ds_list[::10]
         print("Total number of own samples found:", len(sum_depths_file_list))
     
     from sklearn.model_selection import train_test_split

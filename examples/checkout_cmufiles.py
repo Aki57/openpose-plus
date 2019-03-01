@@ -10,7 +10,7 @@ from easydict import EasyDict as edict
 
 sys.path.append('.')
 
-from openpose_plus.inference.common import measure, plot_humans, plot_3d_person, read_2dfiles, read_3dfiles, tranform_keypoints2d
+from openpose_plus.inference.common import measure, plot_humans, plot_human3d, read_2dfiles, read_3dfiles, tranform_keypoints2d
 from openpose_plus.inference.estimator import TfPoseEstimator, Pose3DEstimator
 from openpose_plus.models import get_base_model, get_head_model
 from openpose_plus.utils import Camera, PoseInfo, create_voxelgrid, get_kp_heatmap

@@ -168,10 +168,11 @@ class PoseInfo:
 
 
 class Camera:
-    def __init__(self, K, distCoef):
+    def __init__(self, K, distCoef, use_distort=True):
         self.K = K
         self.K_inv = np.linalg.inv(K)
-        self.D = distCoef
+        self.D = np.squeeze(distCoef)[:5]
+        self.D_apply = use_distort
 
     def project(self, xyz_coords):
         """ Projects a (x, y, z) tuple of world coords into the image frame. """
@@ -180,14 +181,15 @@ class Camera:
         xy_coords = self._from_hom(xyz_coords)
 
         # distortion
-        x, y = xy_coords[:,0], xy_coords[:,1]
-        r2 = x*x + y*y
-        d = self.D
-        deltaR = 1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2
-        deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
-        deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
-        xy_coords[:,0] = deltaR * x + deltaX
-        xy_coords[:,1] = deltaR * y + deltaY
+        if self.D_apply:
+            x, y = xy_coords[:,0], xy_coords[:,1]
+            r2 = x*x + y*y
+            d = self.D
+            deltaR = 1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2
+            deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
+            deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
+            xy_coords[:,0] = deltaR * x + deltaX
+            xy_coords[:,1] = deltaR * y + deltaY
 
         # normalized points and mapping
         xy_coords_h = self._to_hom(xy_coords)
@@ -201,18 +203,19 @@ class Camera:
         xy_coords_h = np.matmul(uv_coords_h, np.transpose(self.K_inv, [1, 0]))
 
         # undistortion iterations
-        x0, y0 = xy_coords_h[:,0], xy_coords_h[:,1]
-        x, y = x0, y0
-        d = self.D
-        for i in range(5):
-            r2 = x*x + y*y
-            deltaR = 1 / (1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2)
-            deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
-            deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
-            x = (x0 - deltaX)*deltaR
-            y = (y0 - deltaY)*deltaR
-        xy_coords_h[:,0] = x
-        xy_coords_h[:,1] = y
+        if self.D_apply:
+            x0, y0 = xy_coords_h[:,0], xy_coords_h[:,1]
+            x, y = x0, y0
+            d = self.D
+            for i in range(5):
+                r2 = x*x + y*y
+                deltaR = 1 / (1 + d[0]*r2 + d[1]*r2*r2 + d[4]*r2*r2*r2)
+                deltaX = 2*d[2]*x*y + d[3]*(r2 + 2*x*x)
+                deltaY = 2*d[3]*x*y + d[2]*(r2 + 2*y*y)
+                x = (x0 - deltaX)*deltaR
+                y = (y0 - deltaY)*deltaR
+            xy_coords_h[:,0] = x
+            xy_coords_h[:,1] = y
 
         # scaling by z coords
         z_coords = np.reshape(z_coords, [-1, 1])

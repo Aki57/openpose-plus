@@ -224,7 +224,7 @@ def plot_humans(image, heatMat, pafMat, humans, name):
     plt.show()
 
 
-def plot_3d_person(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
+def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
 
@@ -257,6 +257,64 @@ def plot_3d_person(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     for pair in CocoPairs:
         if coordsvis[pair[0]] and coordsvis[pair[1]]:
             ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
+
+    # stable range of sight
+    axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
+    if coordsvis[1] == True: # Check if root keypoint is visible
+        axis_range = np.array([[-1.1,1.8,-1.1], [1.1,-0.4,1.1]])
+        axis_range += coords3d[1,:]
+    elif coordsvis[8] == True: # if not try R-hip
+        axis_range += coords3d[8,:]
+    elif coordsvis[11] == True: # if not try L-hip
+        axis_range += coords3d[11,:]
+    else:
+        axis_range += np.mean(coords3d, axis=0)
+    ax.set_xlim3d(axis_range[:,0])
+    ax.set_ylim3d(axis_range[:,2])
+    ax.set_zlim3d(axis_range[:,1])
+    ax.set_xlabel('Width')
+    ax.set_ylabel('Depth')
+    ax.set_zlabel('Height')  # 坐标轴
+    plt.draw()
+
+    plt.show()
+
+
+def plot_3d_gait(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
+    import scipy.misc as sm
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    if coordsvis is None:
+        coords3d = np.array(coords3d)/100.0
+        coordsvis = np.ones_like(coords3d[:,0], dtype=np.bool)
+
+    rgb_img = cv2.imread(rgb_path)
+    rgb_img = cv2.resize(rgb_img, (1920, 1080))
+    dep_img = sm.imread(dep_path)
+    coords2d_proj = cam.project(coords3d[coordsvis,:])
+
+    # 2d display for 3d body projecttion on Kinect frame
+    plt.figure(figsize=[9, 9])
+    plt.subplot(2,1,1)
+    plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
+    plt.imshow(rgb_img)
+    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], '.')
+    plt.draw()
+    
+    plt.subplot(2,1,2)
+    plt.title('3D Body Projection on Kinect-Depth ({0})'.format(idx))
+    plt.imshow(dep_img)
+    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
+    plt.draw()
+
+    # 3d display for body joints
+    plt.figure(figsize=[8, 8])
+    ax = plt.subplot(111, projection='3d')
+    ax.scatter(coords3d[:,0], coords3d[:,2], coords3d[:,1], 'g')  # 绘制数据点
+    for pair in CocoPairs:
+        # if coordsvis[pair[0]] and coordsvis[pair[1]]:
+        ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
 
     # stable range of sight
     axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
