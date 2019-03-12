@@ -8,7 +8,7 @@ config.TRAIN = edict()
 config.TRAIN.train_stage = '3d'  # 2d, 3d stage
 config.TRAIN.train_mode = 'single'  # single, parallel
 config.TRAIN.node_num = 2  # indicate num of parallel gpus or cpus
-config.TRAIN.n_epoch = 10
+config.TRAIN.n_epoch = 25
 config.TRAIN.save_interval = 5000 # 5000
 config.TRAIN.log_interval = 1
 
@@ -38,7 +38,7 @@ elif config.TRAIN.train_stage == '3d':
     config.TRAIN.lr_init = 1e-4  # initial learning rate
     config.TRAIN.lr_decay_interval = 10000  # evey number of step to decay lr
     config.TRAIN.lr_decay_factor = 0.1  # decay lr factor
-    config.TRAIN.weight_decay_factor = 5e-4 # TODO:l2 norm
+    config.TRAIN.weight_decay_factor = 5e-3
     
     config.MODEL.n_pos = 18  # number of keypoints + 1 for background
     config.MODEL.xdim = 64
@@ -53,9 +53,9 @@ else:
 config.DATA = edict()
 config.DATA.train_data = 'custom'  # coco, custom, coco_and_custom
 config.DATA.coco_version = '2017'  # MSCOCO version 2014 or 2017
-config.DATA.data_path = 'data/cmu_dataset'
-config.DATA.your_images_path = os.path.join('data', 'your_data', 'images')
-config.DATA.your_annos_path = os.path.join('data', 'your_data', 'coco.json')
+config.DATA.data_path = 'f:/Lab/dataset/panoptic-toolbox/data'
+config.DATA.image_path = 'KINECTNODE'
+config.DATA.anno_name = 'meta.mat'
 
 config.LOG = edict()
 config.LOG.vis_path = 'vis'

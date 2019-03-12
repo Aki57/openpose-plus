@@ -71,8 +71,11 @@ def get_pose_data_list(data_path, metas_filename, min_count, min_score):
 
 def make_model(input, result, mask, reuse=False, use_slim=False):
     input = tf.reshape(input, [batch_size, xdim, ydim, zdim, n_pos+1])
-    result = tf.reshape(result, [batch_size, xdim, ydim, zdim, n_pos])
-    mask = tf.reshape(mask, [batch_size, xdim, ydim, zdim, n_pos])
+    result = tf.reshape(result, [batch_size, n_pos, 3])
+    mask = tf.reshape(mask, [batch_size, n_pos])
+
+    grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+    grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
@@ -81,7 +84,15 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     stage_losses = []
 
     for _, voxel in enumerate(voxel_list):
-        loss = tf.nn.l2_loss((voxel.outputs - result) * mask)
+        loss = 0.0
+        for idx in range(0, batch_size):
+            one_voxel = voxel.outputs[idx,:,:,:,:]
+            one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
+            one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
+            one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
+            pred_loss = tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:])
+            norm_loss = tf.nn.l2_loss(one_voxel * mask[idx,:])
+            loss += pred_loss * 0.1 + norm_loss * 0.01
         losses.append(loss)
         stage_losses.append(loss / batch_size)
 
@@ -141,12 +152,9 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
 
-    result_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), 3.0, voxel_coordsvis)
-    mask_vis = np.ones_like(result_3d)*voxel_coordsvis
-
     input_3d = np.array(input_3d, dtype=np.float32)
-    result_3d = np.array(result_3d, dtype=np.float32)
-    mask_vis = np.array(mask_vis, dtype=np.float32)
+    result_3d = np.array(voxel_coords3d, dtype=np.float32)
+    mask_vis = np.array(voxel_coordsvis, dtype=np.float32)
 
     return input_3d, result_3d, mask_vis
 
@@ -156,8 +164,8 @@ def _map_fn(depth_list, cams, anno2ds, anno3ds):
     input_3d, result_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32])
 
     input_3d = tf.reshape(input_3d, [xdim, ydim, zdim, n_pos+1])
-    result_3d = tf.reshape(result_3d, [xdim, ydim, zdim, n_pos])
-    mask_vis = tf.reshape(mask_vis, [xdim, ydim, zdim, n_pos])
+    result_3d = tf.reshape(result_3d, [n_pos, 3])
+    mask_vis = tf.reshape(mask_vis, [n_pos])
 
     return input_3d, result_3d, mask_vis
 
@@ -257,7 +265,7 @@ def evaluate(evaluating_dataset, epoch, n_step):
                 invalid_count += 1
             else:
                 sum_loss += _loss
-                
+
             print('Validation loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
             if step == n_step:
                 break
@@ -292,6 +300,11 @@ if __name__ == '__main__':
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
+        # 取1/10样本训练验证有效性
+        sum_depths_file_list = sum_depths_file_list[::50]
+        sum_cams_list = sum_cams_list[::50]
+        sum_anno2ds_list = sum_anno2ds_list[::50]
+        sum_anno3ds_list = sum_anno3ds_list[::50]
         print("Total number of own samples found:", len(sum_depths_file_list))
     
     from sklearn.model_selection import train_test_split

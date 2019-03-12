@@ -75,7 +75,7 @@ def main():
     repeat = 1 # int, default=1, help='repeat the images for n times for profiling.'
     limit = 1 # int, default=-1, help='max number of images.'
 
-    _rgb_files, _dep_files, _cam_list = get_files('data/cmu_dataset')
+    _rgb_files, _dep_files, _cam_list = get_files('f:/Lab/dataset/panoptic-toolbox/data')
     rgb_files = (_rgb_files * repeat)[:limit] # list of str, default='', help='comma separate list of image filenames', required=True
     dep_files = (_dep_files * repeat)[:limit] # list of str, default='', help='comma separate list of depth filenames', required=True
     cam_list = (_cam_list * repeat)[:limit] # list of str, default='', help='comma separate list of cam infos', required=True

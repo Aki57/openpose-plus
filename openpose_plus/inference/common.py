@@ -36,8 +36,11 @@ class CocoPart(Enum):
     LEar = 17
     Background = 18
 
-CocoPairs = [(1, 2), (1, 5), (2, 3), (3, 4), (5, 6), (6, 7), (1, 8), (8, 9), (9, 10), (1, 11), (11, 12), (12, 13), 
-            (1, 0), (0, 14), (14, 16), (0, 15), (15, 17)]  # = 17
+CocoPairs = [(1, 2), (2, 3), (3, 4),  # right arm
+             (1, 8), (8, 9), (9, 10),  # right leg
+             (1, 5), (5, 6), (6, 7),  # left arm
+             (1, 11), (11, 12), (12, 13),  # left leg
+             (1, 0), (0, 14), (14, 16), (0, 15), (15, 17)]  # = 17
 CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
               [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255],
               [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
@@ -257,6 +260,8 @@ def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     for pair in CocoPairs:
         if coordsvis[pair[0]] and coordsvis[pair[1]]:
             ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
+        else:
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2, color='k')
 
     # stable range of sight
     axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
@@ -299,7 +304,7 @@ def plot_3d_gait(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     plt.subplot(2,1,1)
     plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
     plt.imshow(rgb_img)
-    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], '.')
+    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
     plt.draw()
     
     plt.subplot(2,1,2)
@@ -313,8 +318,10 @@ def plot_3d_gait(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     ax = plt.subplot(111, projection='3d')
     ax.scatter(coords3d[:,0], coords3d[:,2], coords3d[:,1], 'g')  # 绘制数据点
     for pair in CocoPairs:
-        # if coordsvis[pair[0]] and coordsvis[pair[1]]:
-        ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
+        if coordsvis[pair[0]] and coordsvis[pair[1]]:
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
+        else:
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2, color='k')
 
     # stable range of sight
     axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])

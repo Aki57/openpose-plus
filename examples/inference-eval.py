@@ -76,9 +76,9 @@ def main():
     head_npz_path = 'models/voxelposenet-False.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
     repeat = 1 # int, default=1, help='repeat the images for n times for profiling.'
-    limit = 1 # int, default=-1, help='max number of images.'
+    limit = -1 # int, default=-1, help='max number of images.'
 
-    _rgb_files, _dep_files, _cam_list, _joint3d_list  = get_files('data/cmu_dataset')
+    _rgb_files, _dep_files, _cam_list, _joint3d_list  = get_files('f:/Lab/dataset/panoptic-toolbox/data')
     rgb_files = (_rgb_files * repeat)[:limit] # list of str, default='', help='comma separate list of image filenames', required=True
     dep_files = (_dep_files * repeat)[:limit] # list of str, default='', help='comma separate list of depth filenames', required=True
     cam_list = (_cam_list * repeat)[:limit] # list of str, default='', help='comma separate list of cam infos', required=True

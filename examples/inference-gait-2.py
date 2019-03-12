@@ -51,27 +51,29 @@ def get_files(data_path, color_folder, depth_folder, camera_file):
     return rgbs_list, deps_list, cam_info
 
 
-def write_gait(coords_xyz_list, filename):
+def write_gait(coords_list, filename, dims='3d'):
     with open(filename,'w') as f:
         # 对openpose输出结果的转换
         transform = [8, 8, 1, 0, 5, 6, 7, -1, 2, 3, 4, -1, 11, 12, 13, -1, 8, 9, 10, -1, 2, -1, -1, -1, -1]
                     #[11 11______________________________________________________________5________________]
                     #[___1________________________________________________________________________________]
-        for coords_xyz in coords_xyz_list:
-            new_coords_xyz = []
-            if coords_xyz is None:
-                new_coords_xyz.append(np.array([50000,50000,50000]))
-                new_coords_xyz = new_coords_xyz*25
+        for coords in coords_list:
+            new_coords = []
+            if coords is None:
+                new_coords.append(np.array([50000,50000,50000]))
+                new_coords = new_coords*25
             else:
-                coords_xyz *= 1000.0
+                if dims == '2d':
+                    coords_z = 50000*np.ones_like(coords[:,0])
+                    coords = np.concatenate((coords, np.expand_dims(coords_z,-1)), axis=1)
                 for idx in transform:
-                    new_coords_xyz.append(coords_xyz[idx,:] if idx >= 0 else np.array([50000,50000,50000]))
-                new_coords_xyz[0] = (coords_xyz[8,:] + coords_xyz[11,:])/2
-                new_coords_xyz[1] = (new_coords_xyz[0] + coords_xyz[1,:])/2
-                new_coords_xyz[20] = (coords_xyz[2,:] + coords_xyz[5,:])/2
+                    new_coords.append(coords[idx,:] if idx >= 0 else np.array([50000,50000,50000]))
+                new_coords[0] = (coords[8,:] + coords[11,:])/2
+                new_coords[1] = (new_coords[0] + coords[1,:])/2
+                new_coords[20] = (coords[2,:] + coords[5,:])/2
 
             line = ''
-            for coord in new_coords_xyz:
+            for coord in new_coords:
                 coord = np.array(coord).astype('int')
                 line += str(coord[0]) + ' ' + str(coord[1]) + ' ' + str(coord[2]) + ' '
             line += '\n'
@@ -88,7 +90,7 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
     e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, (x_size, y_size, z_size), False), 'create Pose3DEstimator')
 
     time0 = time.time()
-    coords_xyz_list, coords_xyz_conf = list(), list()
+    coords_uv_list, coords_xyz_list = list(), list()
     for idx, (rgb_name, dep_name) in enumerate(zip(rgb_files, dep_files)):
         init_w, init_h = (1920, 1080)
         rgb_img = cv2.imread(rgb_name, cv2.IMREAD_COLOR)
@@ -102,29 +104,28 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
             plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
 
         if len(humans) is 0:
+            coords_uv_list.append(None)
             coords_xyz_list.append(None)
-            coords_xyz_conf.append(None)
         else:
-            coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h)
+            coords2d, _, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h, 0.1)
             dep_img = sm.imread(dep_name).astype('float32') / 1000.0
-            voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (x_size, y_size, z_size), 1.2, coords2d_vis)
+            voxel_grid, voxel_coords2d, _, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (x_size, y_size, z_size), 1.2, coords2d_vis)
             voxel_grid = np.expand_dims(voxel_grid, -1)
-            voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (x_size, y_size), 3.0, voxel_coordsvis)
+            voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (x_size, y_size), 3.0)
             voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, z_size, 1])
             input_3d = np.expand_dims(np.concatenate((voxel_grid, voxel_kp), 3), 0)
-            coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
+            coords3d = measure(lambda: e_3d.regression(input_3d), 'e_3d.inference')
             coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
-            coords3d_pred_proj = Camera(cam_info['K'], cam_info['distCoef']).unproject(coords2d, coords3d_pred[:, -1])
 
-            cond = coords2d_conf > coords3d_conf  # use backproj only when 2d was visible and 2d/3d roughly matches
-            coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]
-            coords3d_conf[cond] = coords2d_conf[cond]
-            coords_xyz_list.append(coords3d_pred)
-            coords_xyz_conf.append(coords3d_conf)
+            coords_uv_list.append(coords2d)
+            coords_xyz_list.append(coords3d_pred*1000.0)
             if plot:
                 plot_3d_gait(rgb_name, dep_name, coords3d_pred, Camera(cam_info['K'], cam_info['distCoef']), idx, coords2d_vis)
 
-    write_gait(coords_xyz_list, 'gait.txt')
+
+    write_gait(coords_uv_list, 'gait2d.txt', '2d')
+    write_gait(coords_xyz_list, 'gait3d.txt', '3d')
+
     mean = (time.time() - time0) / len(rgb_files)
     print('inference all took: %f, mean: %f, FPS: %f' % (time.time() - time0, mean, 1.0 / mean))
 
@@ -132,9 +133,9 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
 if __name__ == '__main__':
     base_npz_path = 'models/openposenet.npz' # str, default='', help='path to npz', required=True
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
-    head_npz_path = 'models/voxelposenet-1.npz' # str, default='', help='path to npz', required=True
+    head_npz_path = 'models/voxelposenet.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
     plot = True # bool, default=False, help='draw the results'
 
-    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database', 'color', 'depth', 'kinect.txt')
+    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database', '2color', '2depth', 'kinect2.txt')
     inference(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info, plot)

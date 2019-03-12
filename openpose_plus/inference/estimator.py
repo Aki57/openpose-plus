@@ -55,8 +55,19 @@ class Pose3DEstimator:
         self.persistent_sess.close()
 
     def inference(self, input_3d):
-        out_voxel = self.persistent_sess.run(
-            [self.tensor_voxel], feed_dict={self.tensor_input3d: input_3d,})
+        out_voxel = self.persistent_sess.run(self.tensor_voxel, feed_dict={self.tensor_input3d: input_3d,})
 
         coords_xyz, coords_conf = detect_scorevol(out_voxel)
         return coords_xyz, coords_conf
+
+    def regression(self, input_3d):
+        _, xdim, ydim, zdim, n_chan = input_3d.shape
+        grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+        grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_chan-1])
+
+        self.tensor_voxel = tf.exp(tf.squeeze(self.tensor_voxel))
+        self.tensor_voxel = self.tensor_voxel / tf.reduce_sum(self.tensor_voxel, [0,1,2])
+        tensor_pred = tf.transpose(tf.reduce_sum(self.tensor_voxel * grid, [1,2,3]))
+
+        out_pred = self.persistent_sess.run(tensor_pred, feed_dict={self.tensor_input3d: input_3d,})
+        return out_pred
