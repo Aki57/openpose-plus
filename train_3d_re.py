@@ -24,7 +24,6 @@ from train_config import config
 from openpose_plus.models import model
 from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
-
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
 
@@ -86,12 +85,13 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     for _, voxel in enumerate(voxel_list):
         loss = 0.0
         for idx in range(0, batch_size):
-            one_voxel = tf.exp(voxel.outputs[idx,:,:,:,:])
-            one_voxel = one_voxel / tf.reduce_sum(one_voxel, [0,1,2])
-            one_pred = tf.reduce_sum(one_voxel * grid, [1,2,3])
-            one_result = tf.transpose(result[idx,:,:])
-            one_mask = mask[idx,:]
-            loss += tf.nn.l2_loss((one_pred - one_result) * one_mask)
+            one_voxel = voxel.outputs[idx,:,:,:,:]
+            one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
+            one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
+            one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
+            pred_loss = tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:])
+            norm_loss = tf.nn.l2_loss(one_voxel * mask[idx,:])
+            loss += pred_loss * 0.1 + norm_loss * 0.01
         losses.append(loss)
         stage_losses.append(loss / batch_size)
 
@@ -136,7 +136,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
 
     # Argument of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
-    rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-35, 35)), x=xdim, y=xdim) # no more than 45 degrees
+    rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
     voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
@@ -248,13 +248,14 @@ if __name__ == '__main__':
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
-                if 'KINECTNODE' in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat', 9, 0.25)
+                if config.DATA.image_path in folder:
+                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = \
+                        get_pose_data_list(folder, config.DATA.anno_name, 9, 0.25)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
-        print("Total number of own images found:", len(sum_depths_file_list))
+        print("Total number of own samples found:", len(sum_depths_file_list))
 
     # define data augmentation
     def generator():

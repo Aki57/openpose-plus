@@ -24,19 +24,14 @@ from train_config import config
 from openpose_plus.models import model
 from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
-
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
 
 tl.files.exists_or_mkdir(config.LOG.vis_path, verbose=False)  # to save visualization results
 tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save model files
 
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 # FIXME: Don't use global variables.
 # define hyper-parameters for training
-node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
 n_epoch = config.TRAIN.n_epoch
 save_interval = config.TRAIN.save_interval
@@ -85,14 +80,13 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
 
     for _, voxel in enumerate(voxel_list):
         loss = 0.0
-        for idx in range(0, batch_size):
+        for idx in range(batch_size):
             one_voxel = voxel.outputs[idx,:,:,:,:]
             one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
             one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
             one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
             pred_loss = tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:])
-            norm_loss = tf.nn.l2_loss(one_voxel * mask[idx,:])
-            loss += pred_loss * 0.1 + norm_loss * 0.01
+            loss += pred_loss * 0.00025
         losses.append(loss)
         stage_losses.append(loss / batch_size)
 
@@ -178,6 +172,7 @@ def train(training_dataset, epoch, n_step):
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
+    voxel = head_net.last_voxel
     stage_losses = head_net.stage_losses
     l2_loss = head_net.l2_loss
 
@@ -211,13 +206,24 @@ def train(training_dataset, epoch, n_step):
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
                 print('lr decay to {}'.format(lr_init*new_lr_decay))
 
-            [_, _loss, _stage_losses, _l2] = sess.run([train_op, head_loss, stage_losses, l2_loss])
+            [_, _voxel, _loss, _stage_losses, _l2] = sess.run([train_op, voxel, head_loss, stage_losses, l2_loss])
 
             lr = sess.run(lr_v)
             print('Training loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
             for ix, sl in enumerate(_stage_losses):
                 print('Network#', ix, 'Loss:', sl)
+
+            grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
+            grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
+            for idx in range(batch_size):
+                one_voxel = _voxel[idx,:,:,:,:]
+                max_voxel = np.max(one_voxel,(0,1,2))
+                exp_voxel = np.exp(one_voxel) / np.exp(max_voxel) # 防止数值溢出
+                sum_voxel = np.sum(exp_voxel, (0,1,2))
+                norm_voxel = exp_voxel / sum_voxel
+                one_pred = norm_voxel * grid
+                one_pred = np.sum(one_pred, (1,2,3))
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):

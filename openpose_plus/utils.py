@@ -158,14 +158,6 @@ class PoseInfo:
             joint3d_list.append(meta.joint3d_list)
         return cam_list, rgb_list, dep_list, joint3d_list
 
-    def get_test_data_list(self):
-        cam_list, rgb_list, dep_list = [], [], []
-        for meta in self.metas:
-            cam_list.append(self.cam_calib)
-            rgb_list.append(meta.rgb_url)
-            dep_list.append(meta.depth_url)
-        return cam_list, rgb_list, dep_list
-
 
 class Camera:
     def __init__(self, K, distCoef, use_distort=True):

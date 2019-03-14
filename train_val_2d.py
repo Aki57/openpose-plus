@@ -30,12 +30,8 @@ tl.logging.set_verbosity(tl.logging.DEBUG)
 tl.files.exists_or_mkdir(config.LOG.vis_path, verbose=False)  # to save visualization results
 tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save model files
 
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 # FIXME: Don't use global variables.
 # define hyper-parameters for training
-node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
 n_epoch = config.TRAIN.n_epoch
 save_interval = config.TRAIN.save_interval
@@ -78,7 +74,7 @@ def make_model(input, results, is_train=True, reuse=False):
     losses = []
     stage_losses = []
 
-    for idx, (l1, l2) in enumerate(zip(b1_list, b2_list)):
+    for _, (l1, l2) in enumerate(zip(b1_list, b2_list)):
         loss_l1 = tf.nn.l2_loss(l1.outputs - confs)
         loss_l2 = tf.nn.l2_loss(l2.outputs - pafs)
 
@@ -110,8 +106,12 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     annos2d = cPickle.loads(ground_truth2d)
     annos2d = list(annos2d)
 
-    depth_image = sio.loadmat(depth_list)['depthim_incolor']
-    depth_image = depth_image / 20.0
+    try:
+        depth_image = sio.loadmat(depth_list)['depthim_incolor']
+        depth_image = depth_image / 20.0
+    except:
+        depth_image = np.ones_like(rgb_image[:,:,0], dtype=np.float) * 255
+        print("File Error: {} is broken down.\n".format(depth_list))
 
     ## 2d data augmentation
     # random transfrom
@@ -163,7 +163,7 @@ def _map_fn(rgb_list, depth_list, anno2ds):
 def train(training_dataset, epoch, n_step):
     ds = training_dataset.shuffle(buffer_size=4096)  # shuffle before loading images
     ds = ds.map(_map_fn, num_parallel_calls=multiprocessing.cpu_count() // 2)  # decouple the heavy map_fn
-    ds = ds.batch(batch_size)  # TODO: consider using tf.contrib.map_and_batch
+    ds = ds.batch(batch_size)
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
@@ -176,14 +176,14 @@ def train(training_dataset, epoch, n_step):
     stage_losses = base_net.stage_losses
     l2_loss = base_net.l2_loss
 
-    global_step = tf.Variable(1, trainable=False)
-    print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
-        n_step, batch_size, lr_init, lr_decay_interval))
-    with tf.variable_scope('learning_rate'):
-        lr_v = tf.Variable(lr_init, trainable=False)
+    new_lr_decay = lr_decay_factor**((epoch-1)*n_step // lr_decay_interval)
+    print('Start - epoch: {} n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
+        epoch, n_step, batch_size, lr_init*new_lr_decay, lr_decay_interval))
 
-    opt = tf.train.MomentumOptimizer(lr_v, 0.9)
-    train_op = opt.minimize(base_loss, global_step=global_step)
+    lr_v = tf.Variable(lr_init * new_lr_decay, trainable=False, name='learning_rate')
+    global_step = tf.Variable(1, trainable=False)
+    train_op = tf.train.MomentumOptimizer(lr_v, 0.9).minimize(base_loss, global_step=global_step)
+
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 
     # start training
@@ -201,15 +201,16 @@ def train(training_dataset, epoch, n_step):
         while True:
             tic = time.time()
             step = sess.run(global_step)
-            if step != 0 and (step % lr_decay_interval == 0):
-                new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
+            if step != 0 and (((epoch-1)*n_step + step) % lr_decay_interval == 0):
+                new_lr_decay = lr_decay_factor**(((epoch-1)*n_step + step) // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
+                print('lr decay to {}'.format(lr_init*new_lr_decay))
 
             [_, _loss, _stage_losses, _l2] = sess.run([train_op, base_loss, stage_losses, l2_loss])
 
             # tstring = time.strftime('%d-%m %H:%M:%S', time.localtime(time.time()))
             lr = sess.run(lr_v)
-            print('Total Loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
+            print('Training Loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
             for ix, ll in enumerate(_stage_losses):
                 print('Network#', ix, 'For Branch', ix % 2 + 1, 'Loss:', ll)
@@ -236,11 +237,12 @@ def evaluate(evaluating_dataset, epoch, n_step):
     ds = ds.prefetch(2)
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
-    _, base_loss = make_model(*one_element, is_train=True, reuse=False)
+    base_net, base_loss = make_model(*one_element, is_train=True, reuse=False)
+    l2_loss = base_net.l2_loss
 
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 
-    # start training
+    # start evaluating
     with tf.Session(config=config) as sess:
         sess.run(tf.global_variables_initializer())
 
@@ -250,21 +252,27 @@ def evaluate(evaluating_dataset, epoch, n_step):
         except:
             print("no pre-trained model")
 
-        # train until the end
+        # evaluate all test files
+        step = 0
         sum_loss = 0.0
-        step = 1
+        invalid_count = 0
         while True:
             tic = time.time()
-            _loss = sess.run(base_loss)
-            sum_loss += _loss
-            print('Total Loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
+            [_loss, _l2] = sess.run([base_loss, l2_loss])
+
+            step += 1
+            if _loss == _l2:
+                invalid_count += 1
+            else:
+                sum_loss += _loss
+
+            print('Validation loss at iteration {} / {} is: {} Took: {}s'.format(step, n_step, _loss, time.time() - tic))
             if step == n_step:
                 break
-            else:
-                step += 1
+
         # evaluating finished
-        avg_loss = sum_loss / n_step
-        print('Sum average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
+        avg_loss = sum_loss / (n_step-invalid_count)
+        print('Total validation average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
 
 
 if __name__ == '__main__':
@@ -285,8 +293,9 @@ if __name__ == '__main__':
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
-                if 'KINECTNODE' in folder:
-                    _rgbs_file_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder,'meta.mat', 5, 0.25)
+                if config.DATA.image_path in folder:
+                    _rgbs_file_list, _depths_file_list, _anno2ds_list = \
+                        get_pose_data_list(folder, config.DATA.anno_name, 5, 0.25)
                     sum_rgbs_file_list.extend(_rgbs_file_list)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
@@ -312,8 +321,8 @@ if __name__ == '__main__':
             yield _input_rgb.encode('utf-8'), _input_depth.encode('utf-8'), cPickle.dumps(_target_anno2d)
     eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
-    for epoch in range(n_epoch):
+    for epoch in range(1, n_epoch+1):
         tf.reset_default_graph()
-        train(train_ds, epoch, (int)(len(train_rgbs_list)/batch_size))
+        train(train_ds, epoch, (int)(len(train_rgbs_list)//batch_size))
         tf.reset_default_graph()
-        evaluate(eval_ds, epoch, (int)(len(eval_rgbs_list)/batch_size))
+        evaluate(eval_ds, epoch, (int)(len(eval_rgbs_list)//batch_size))

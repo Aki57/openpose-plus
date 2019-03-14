@@ -33,7 +33,7 @@ def get_files(data_path):
     return sum_rgbs_list, sum_depths_list, sum_cams_list, sum_joint3d_list
 
 
-def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_list, joint3d_list):
+def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_list, joint3d_list, plot):
     height, width, channel = (368, 432, 4)
     base_model_func = get_base_model(base_model_name)
     e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
@@ -48,7 +48,8 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
         input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
         humans, heatMap, pafMap = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
-        plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
+        if plot:
+            plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
 
         for pred_2d, gt_3d in zip(humans, joints3d):
             coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(pred_2d.body_parts, init_w, init_h)
@@ -60,8 +61,9 @@ def inference(base_model_name, base_npz_path, head_model_name, head_npz_path, rg
             cond = coords2d_conf > coords3d_conf  # use backproj only when 2d was visible and 2d/3d roughly matches
             coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]
             coords3d_conf[cond] = coords2d_conf[cond]
-            plot_human3d(rgb_name, dep_name, coords3d_pred, Camera(cam_info['K'], cam_info['distCoef']), idx, coords2d_vis)
-            plot_human3d(rgb_name, dep_name, gt_3d[:18], Camera(cam_info['K'], cam_info['distCoef']), idx)
+            if plot:
+                plot_human3d(rgb_name, dep_name, coords3d_pred, Camera(cam_info['K'], cam_info['distCoef']), idx, coords2d_vis)
+                plot_human3d(rgb_name, dep_name, gt_3d[:18], Camera(cam_info['K'], cam_info['distCoef']), idx)
 
             coords_xyz_list.append(coords3d_pred)
             coords_xyz_conf.append(coords3d_conf)
@@ -75,6 +77,7 @@ def main():
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
     head_npz_path = 'models/voxelposenet-False.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
+    plot = True # bool, default=False, help='draw the results'
     repeat = 1 # int, default=1, help='repeat the images for n times for profiling.'
     limit = -1 # int, default=-1, help='max number of images.'
 
@@ -84,7 +87,7 @@ def main():
     cam_list = (_cam_list * repeat)[:limit] # list of str, default='', help='comma separate list of cam infos', required=True
     joint3d_list = (_joint3d_list * repeat)[:limit] # list of str, default='', help='comma separate list of cam infos', required=True
 
-    inference(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_list, joint3d_list)
+    inference(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_list, joint3d_list, plot)
 
 
 if __name__ == '__main__':

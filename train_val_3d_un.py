@@ -24,19 +24,14 @@ from train_config import config
 from openpose_plus.models import model
 from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
-
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
 
 tl.files.exists_or_mkdir(config.LOG.vis_path, verbose=False)  # to save visualization results
 tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save model files
 
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 # FIXME: Don't use global variables.
 # define hyper-parameters for training
-node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
 n_epoch = config.TRAIN.n_epoch
 save_interval = config.TRAIN.save_interval
