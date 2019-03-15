@@ -69,7 +69,13 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     result = tf.reshape(result, [batch_size, n_pos, 3])
     mask = tf.reshape(mask, [batch_size, n_pos])
 
+    # ori
     grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+    # # mid and not norm
+    # grid = tf.meshgrid(tf.range(-xdim/2.0, xdim/2), tf.range(-ydim/2.0, ydim/2), tf.range(-zdim/2.0, zdim/2), indexing='ij')
+    # # mid and norm
+    # grid = tf.meshgrid(tf.range(-1.0, 1.0, 2.0/xdim), tf.range(-1.0, 1.0, 2.0/ydim), tf.range(-1.0, 1.0, 2.0/zdim), indexing='ij')
+
     grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
@@ -85,8 +91,17 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
             one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
             one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
             one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
-            pred_loss = tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:])
-            loss += pred_loss * 0.00025
+
+            # ori
+            one_result = tf.transpose(result[idx,:,:])
+            # # mid and not norm
+            # one_result = tf.transpose(result[idx,:,:]) - 32
+            # one_result = tf.transpose(result[idx,:,:]) - 31.5
+            # # mid and norm
+            # one_result = (tf.transpose(result[idx,:,:]) - 32) / 64
+
+            pred_loss = tf.nn.l2_loss((one_pred - one_result) * mask[idx,:])
+            loss += pred_loss
         losses.append(loss)
         stage_losses.append(loss / batch_size)
 
@@ -214,16 +229,16 @@ def train(training_dataset, epoch, n_step):
             for ix, sl in enumerate(_stage_losses):
                 print('Network#', ix, 'Loss:', sl)
 
-            grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
-            grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
-            for idx in range(batch_size):
-                one_voxel = _voxel[idx,:,:,:,:]
-                max_voxel = np.max(one_voxel,(0,1,2))
-                exp_voxel = np.exp(one_voxel) / np.exp(max_voxel) # 防止数值溢出
-                sum_voxel = np.sum(exp_voxel, (0,1,2))
-                norm_voxel = exp_voxel / sum_voxel
-                one_pred = norm_voxel * grid
-                one_pred = np.sum(one_pred, (1,2,3))
+            # grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
+            # grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
+            # for idx in range(batch_size):
+            #     one_voxel = _voxel[idx,:,:,:,:]
+            #     max_voxel = np.max(one_voxel,(0,1,2))
+            #     exp_voxel = np.exp(one_voxel) / np.exp(max_voxel) # 防止数值溢出
+            #     sum_voxel = np.sum(exp_voxel, (0,1,2))
+            #     norm_voxel = exp_voxel / sum_voxel
+            #     one_pred = norm_voxel * grid
+            #     one_pred = np.sum(one_pred, (1,2,3))
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):

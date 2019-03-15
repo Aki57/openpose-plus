@@ -2,10 +2,9 @@ from enum import Enum
 import time
 from distutils.dir_util import mkpath
 
+import cv2
 import numpy as np
 import tensorflow as tf
-import cv2
-import scipy.io as sio
 
 from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap
 
@@ -46,33 +45,38 @@ CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255
               [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
 
 
-def read_imgfile(path, width, height, data_format='channels_last'):
-    """Read image file and resize to network input size."""
-    val_image = cv2.imread(path, cv2.IMREAD_COLOR)
-    if width is not None and height is not None:
-        val_image = cv2.resize(val_image, (width, height))
-    if data_format == 'channels_first':
-        val_image = val_image.transpose([2, 0, 1])
-    return val_image / 255.0
+def read_depth(dep_path):
+    """smooth depth image by matlab interpret."""
+    if '.mat' in dep_path:
+        from scipy.io import loadmat
+        dep_img = loadmat(dep_path)['depthim_incolor']
+    else:
+        from scipy.misc import imread
+        dep_img = imread(dep_path)
+    return dep_img
 
 
 def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last'):
     """Read image file and resize to network input size."""
+    dep_img = read_depth(dep_path) / 20.0
+    init_h, init_w = dep_img.shape
+
     rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
-    dep_img = sio.loadmat(dep_path)['depthim_incolor'] / 20.0
-    dep_img = np.expand_dims(dep_img, axis=2)
-    input_2d = np.concatenate((rgb_img, dep_img), axis=2)
-    init_h, init_w, _ = input_2d.shape
+    if rgb_img.shape[:2] != dep_img.shape:
+        rgb_img = cv2.resize(rgb_img, (init_w, init_h))
+
+    input_2d = np.concatenate((rgb_img, np.expand_dims(dep_img, -1)), -1)
     if height is not None and width is not None:
         input_2d = cv2.resize(input_2d, (width, height))
     if data_format == 'channels_first':
         input_2d = input_2d.transpose([2, 0, 1])
+
     return input_2d / 255.0, init_h, init_w
 
 
 def read_3dfiles(dep_path, cam_info, coords2d, coordsvis, width, height, depth, data_format='channels_last'):
     """Read image file and resize to network input size."""
-    dep_img = sio.loadmat(dep_path)['depthim_incolor'] / 1000.0
+    dep_img = read_depth(dep_path) / 1000.0
     voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (width, height, depth), 1.2, coordsvis)
     voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), 3.0, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, depth, 1])
@@ -92,40 +96,6 @@ def tranform_keypoints2d(body, width, height, kp_score_thresh=0.25):
         if coords2d_conf[i] > kp_score_thresh:
             coords2d_vis[i] = True
     return coords2d, coords2d_conf, coords2d_vis
-
-
-def get_sample_images(w, h):
-    val_image = [
-        read_imgfile('./images/p1.jpg', w, h),
-        read_imgfile('./images/p2.jpg', w, h),
-        read_imgfile('./images/p3.jpg', w, h),
-        read_imgfile('./images/golf.jpg', w, h),
-        read_imgfile('./images/hand1.jpg', w, h),
-        read_imgfile('./images/hand2.jpg', w, h),
-        read_imgfile('./images/apink1_crop.jpg', w, h),
-        read_imgfile('./images/ski.jpg', w, h),
-        read_imgfile('./images/apink2.jpg', w, h),
-        read_imgfile('./images/apink3.jpg', w, h),
-        read_imgfile('./images/handsup1.jpg', w, h),
-        read_imgfile('./images/p3_dance.png', w, h),
-    ]
-    return val_image
-
-
-def load_graph(model_file):
-    """Load a freezed graph from file."""
-    graph_def = tf.GraphDef()
-    with open(model_file, "rb") as f:
-        graph_def.ParseFromString(f.read())
-
-    graph = tf.Graph()
-    with graph.as_default():
-        tf.import_graph_def(graph_def)
-    return graph
-
-
-def get_op(graph, name):
-    return graph.get_operation_by_name('import/%s' % name).outputs[0]
 
 
 class Profiler(object):
@@ -197,6 +167,11 @@ def draw_humans(npimg, humans):
     return npimg
 
 
+def do_plot():
+    import matplotlib.pyplot as plt
+    plt.show()
+
+
 def plot_humans(image, heatMat, pafMat, humans, name):
     import matplotlib.pyplot as plt
     fig = plt.figure()
@@ -224,10 +199,46 @@ def plot_humans(image, heatMat, pafMat, humans, name):
     plt.colorbar()
     mkpath('vis')
     plt.savefig('vis/result-%s.png' % name)
-    plt.show()
+
+
+def plot_human2d(rgb_path, dep_path, coords2d, idx=None, coordsvis=None):
+    import matplotlib.pyplot as plt
+    if coordsvis is None:
+        coordsvis = np.ones_like(coords2d[:,0], dtype=np.bool)
+
+    dep_img = read_depth(dep_path)
+    rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+    if rgb_img.shape[:2] != dep_img.shape:
+        rgb_img = cv2.resize(rgb_img, (dep_img.shape[1], dep_img.shape[0]))
+
+    # 2d display for 3d body projecttion on Kinect frame
+    plt.figure(figsize=[8, 7])
+    plt.subplots_adjust(0, 0.05, 1, 0.95, 0, 0)
+    plt.subplot(2,1,1)
+    plt.title('2D Body on Kinect-Color ({})'.format(idx))
+    plt.imshow(rgb_img)
+    plt.plot(coords2d[:,0], coords2d[:,1], '.')
+    for pair in CocoPairs:
+        if coordsvis[pair[0]] and coordsvis[pair[1]]:
+            plt.plot(coords2d[pair,0], coords2d[pair,1], linewidth=2)
+        else:
+            plt.plot(coords2d[pair,0], coords2d[pair,1], color='k')
+    plt.draw()
+    
+    plt.subplot(2,1,2)
+    plt.title('2D Body on Kinect-Depth ({})'.format(idx))
+    plt.imshow(dep_img)
+    plt.plot(coords2d[:,0], coords2d[:,1], 'r.')
+    for pair in CocoPairs:
+        if coordsvis[pair[0]] and coordsvis[pair[1]]:
+            plt.plot(coords2d[pair,0], coords2d[pair,1], linewidth=2)
+        else:
+            plt.plot(coords2d[pair,0], coords2d[pair,1], color='k')
+    plt.draw()
 
 
 def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
+    import matplotlib.gridspec as gridspec
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
 
@@ -235,33 +246,36 @@ def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
         coords3d = np.array(coords3d)/100.0
         coordsvis = np.ones_like(coords3d[:,0], dtype=np.bool)
 
+    dep_img = read_depth(dep_path)
     rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
-    dep_img = sio.loadmat(dep_path)['depthim_incolor']
+    if rgb_img.shape[:2] != dep_img.shape:
+        rgb_img = cv2.resize(rgb_img, (dep_img.shape[1], dep_img.shape[0]))
     coords2d_proj = cam.project(coords3d[coordsvis,:])
 
     # 2d display for 3d body projecttion on Kinect frame
-    plt.figure(figsize=[9, 9])
-    plt.subplot(2,1,1)
-    plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
+    plt.figure(figsize=[15, 8])
+    plt.subplots_adjust(0, 0.05, 1, 0.95, 0, 0)
+    gs = gridspec.GridSpec(2,2)
+    plt.subplot(gs[0,0])
+    plt.title('3D Body Projection on Kinect-Color ({})'.format(idx))
     plt.imshow(rgb_img)
     plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], '.')
     plt.draw()
     
-    plt.subplot(2,1,2)
-    plt.title('3D Body Projection on Kinect-Depth ({0})'.format(idx))
+    plt.subplot(gs[1,0])
+    plt.title('3D Body Projection on Kinect-Depth ({})'.format(idx))
     plt.imshow(dep_img)
     plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
     plt.draw()
 
     # 3d display for body joints
-    plt.figure(figsize=[8, 8])
-    ax = plt.subplot(111, projection='3d')
+    ax = plt.subplot(gs[:,1], projection='3d')
     ax.scatter(coords3d[:,0], coords3d[:,2], coords3d[:,1], 'g')  # 绘制数据点
     for pair in CocoPairs:
         if coordsvis[pair[0]] and coordsvis[pair[1]]:
             ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
         else:
-            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2, color='k')
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], color='k')
 
     # stable range of sight
     axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
@@ -281,68 +295,6 @@ def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
     ax.set_ylabel('Depth')
     ax.set_zlabel('Height')  # 坐标轴
     plt.draw()
-
-    plt.show()
-
-
-def plot_3d_gait(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
-    import scipy.misc as sm
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
-
-    if coordsvis is None:
-        coords3d = np.array(coords3d)/100.0
-        coordsvis = np.ones_like(coords3d[:,0], dtype=np.bool)
-
-    rgb_img = cv2.imread(rgb_path)
-    rgb_img = cv2.resize(rgb_img, (1920, 1080))
-    dep_img = sm.imread(dep_path)
-    coords2d_proj = cam.project(coords3d[coordsvis,:])
-
-    # 2d display for 3d body projecttion on Kinect frame
-    plt.figure(figsize=[9, 9])
-    plt.subplot(2,1,1)
-    plt.title('3D Body Projection on Kinect-Color ({0})'.format(idx))
-    plt.imshow(rgb_img)
-    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
-    plt.draw()
-    
-    plt.subplot(2,1,2)
-    plt.title('3D Body Projection on Kinect-Depth ({0})'.format(idx))
-    plt.imshow(dep_img)
-    plt.plot(coords2d_proj[:,0], coords2d_proj[:,1], 'r.')
-    plt.draw()
-
-    # 3d display for body joints
-    plt.figure(figsize=[8, 8])
-    ax = plt.subplot(111, projection='3d')
-    ax.scatter(coords3d[:,0], coords3d[:,2], coords3d[:,1], 'g')  # 绘制数据点
-    for pair in CocoPairs:
-        if coordsvis[pair[0]] and coordsvis[pair[1]]:
-            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
-        else:
-            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2, color='k')
-
-    # stable range of sight
-    axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])
-    if coordsvis[1] == True: # Check if root keypoint is visible
-        axis_range = np.array([[-1.1,1.8,-1.1], [1.1,-0.4,1.1]])
-        axis_range += coords3d[1,:]
-    elif coordsvis[8] == True: # if not try R-hip
-        axis_range += coords3d[8,:]
-    elif coordsvis[11] == True: # if not try L-hip
-        axis_range += coords3d[11,:]
-    else:
-        axis_range += np.mean(coords3d, axis=0)
-    ax.set_xlim3d(axis_range[:,0])
-    ax.set_ylim3d(axis_range[:,2])
-    ax.set_zlim3d(axis_range[:,1])
-    ax.set_xlabel('Width')
-    ax.set_ylabel('Depth')
-    ax.set_zlabel('Height')  # 坐标轴
-    plt.draw()
-
-    plt.show()
 
 
 def rename_tensor(x, name):

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import tensorflow as tf
 import tensorlayer as tl
-from tensorlayer.layers import (ConcatLayer, Conv3dLayer, DeConv3dLayer, InputLayer, MaxPool3d, ElementwiseLayer)
+from tensorlayer.layers import (ConcatLayer, Conv3dLayer, DeConv3dLayer, InputLayer, MaxPool3d, ElementwiseLayer, BatchNormLayer)
 __all__ = [
     'model',
 ]
@@ -12,7 +12,7 @@ W_init = tf.contrib.layers.xavier_initializer()
 b_init = tf.constant_initializer(0.0001)
 decay = 0.999
 
-def model(x, n_pos, reuse=None, use_slim=False, data_format='channels_last'):
+def model(x, n_pos, reuse=False, use_slim=False, data_format='channels_last'):
     """ Init deconv3d kernal value. """
     def get_deconv_init(shape):
         width = shape[0]
@@ -124,10 +124,9 @@ def model(x, n_pos, reuse=None, use_slim=False, data_format='channels_last'):
                     b_init=b_init,
                     name='scorevolume_final')
 
-            if scorevolume_list == []:
-                scorevolume_list.append(scorevolume)
-            else:
+            if len(scorevolume_list) != 0:
                 scorevolume = ElementwiseLayer([scorevolume, scorevolume_list[-1]], combine_fn=tf.add, name='add')
-                scorevolume_list.append(scorevolume)
+            # scorevolume = BatchNormLayer(scorevolume, is_train=bool(1-reuse), name='bn%d'%block_id)
+            scorevolume_list.append(scorevolume)
 
         return scorevolume_list, scorevolume_list[-1]
