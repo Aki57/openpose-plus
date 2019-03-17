@@ -51,6 +51,7 @@ n_pos = config.MODEL.n_pos
 xdim = config.MODEL.xdim
 ydim = config.MODEL.ydim
 zdim = config.MODEL.zdim
+sigma = config.MODEL.sigma
 b_slim = config.MODEL.use_slim
 
 
@@ -125,7 +126,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
 
     # Argument of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
-    rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-35, 35)), x=xdim, y=xdim) # no more than 45 degrees
+    rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
     voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
@@ -135,12 +136,12 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
     voxel_coords2d, voxel_coords3d, voxel_coordsvis = np.array(coords2d), np.array(coords3d), np.array(coordsvis) 
 
-    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), 3.0, voxel_coordsvis)
+    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), sigma, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(heatmap_kp, 2), [1, 1, zdim, 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
 
-    result_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), 3.0, voxel_coordsvis)
+    result_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), sigma, voxel_coordsvis)
     mask_vis = np.ones_like(result_3d)*voxel_coordsvis
 
     input_3d = np.array(input_3d, dtype=np.float32)
@@ -240,8 +241,9 @@ if __name__ == '__main__':
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
-                if 'KINECTNODE' in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder,'meta.mat', 9, 0.25)
+                if config.DATA.image_path in folder:
+                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = \
+                        get_pose_data_list(folder, config.DATA.anno_name, 9, 0.25)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)

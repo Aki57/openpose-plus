@@ -8,10 +8,8 @@ import tensorflow as tf
 
 from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap
 
-regularizer_conv = 0.004
-regularizer_dsconv = 0.0004
-batchnorm_fused = True
-activation_fn = tf.nn.relu
+voxel_f = 1.2
+heatmap_sigma = 3.0
 
 # actually the output order of Openpose
 class CocoPart(Enum):
@@ -77,8 +75,8 @@ def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last')
 def read_3dfiles(dep_path, cam_info, coords2d, coordsvis, width, height, depth, data_format='channels_last'):
     """Read image file and resize to network input size."""
     dep_img = read_depth(dep_path) / 1000.0
-    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (width, height, depth), 1.2, coordsvis)
-    voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), 3.0, voxel_coordsvis)
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (width, height, depth), voxel_f, coordsvis)
+    voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), heatmap_sigma, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, depth, 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)

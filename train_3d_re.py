@@ -51,6 +51,7 @@ n_pos = config.MODEL.n_pos
 xdim = config.MODEL.xdim
 ydim = config.MODEL.ydim
 zdim = config.MODEL.zdim
+sigma = config.MODEL.sigma
 b_slim = config.MODEL.use_slim
 
 
@@ -146,7 +147,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
     voxel_coords2d, voxel_coords3d, voxel_coordsvis = np.array(coords2d), np.array(coords3d), np.array(coordsvis) 
 
-    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), 3.0, voxel_coordsvis)
+    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), sigma, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(heatmap_kp, 2), [1, 1, zdim, 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)

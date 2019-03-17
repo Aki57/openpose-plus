@@ -10,7 +10,7 @@ import tensorlayer as tl
 
 sys.path.append('.')
 
-from openpose_plus.inference.common import measure, rename_tensor
+from openpose_plus.inference.common import measure
 from openpose_plus.models import get_base_model
 
 tf.logging.set_verbosity(tf.logging.DEBUG)

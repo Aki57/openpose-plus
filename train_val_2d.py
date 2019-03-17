@@ -106,17 +106,15 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     annos2d = cPickle.loads(ground_truth2d)
     annos2d = list(annos2d)
 
-    try:
-        depth_image = sio.loadmat(depth_list)['depthim_incolor']
-        depth_image = depth_image / 20.0
-    except:
-        depth_image = np.ones_like(rgb_image[:,:,0], dtype=np.float) * 255
-        print("File Error: {} is broken down.\n".format(depth_list))
+    depth_image = sio.loadmat(depth_list)['depthim_incolor']
+    depth_image = depth_image / np.random.uniform(20, 40)
+    percent = np.random.uniform()
+    depth_image = (tl.prepro.drop(depth_image, keep=percent) if percent > 0.75 else depth_image * 0)
 
     ## 2d data augmentation
     # random transfrom
-    M_rotate = tl.prepro.affine_rotation_matrix(angle=(-30, 30))  # original paper: -40~40
-    M_zoom = tl.prepro.affine_zoom_matrix(zoom_range=(0.5, 0.8))  # original paper: 0.5~1.1
+    M_rotate = tl.prepro.affine_rotation_matrix(angle=(-40, 40))  # original paper: -40~40 -> -30~30
+    M_zoom = tl.prepro.affine_zoom_matrix(zoom_range=(0.5, 1.1))  # original paper: 0.5~1.1 -> 0.5~0.8
     M_combined = M_rotate.dot(M_zoom)
     transform_matrix = tl.prepro.transform_matrix_offset_center(M_combined, x=rgb_image.shape[0], y=rgb_image.shape[1])
     rgb_image = tl.prepro.affine_transform_cv2(rgb_image, transform_matrix)
@@ -128,6 +126,7 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     # concat augmented rgb and depth
     depth_image = np.expand_dims(depth_image, axis=2)
     input_2d = np.concatenate((rgb_image, depth_image), axis=2)
+    input_2d = (-input_2d + 255 if percent > 0.25 and percent < 0.5 else input_2d)
 
     # generate 2d result maps including keypoints heatmap, pafs
     height, width, _ = input_2d.shape
@@ -153,8 +152,8 @@ def _map_fn(rgb_list, depth_list, anno2ds):
     input_2d = tf.reshape(input_2d, [hin, win, 4])
     result2dmap = tf.reshape(result2dmap, [hout, wout, n_pos*3])
 
-    input_2d = tf.image.random_brightness(input_2d, max_delta=45./255.)   # 64./255. 32./255.)  caffe -30~50
-    input_2d = tf.image.random_contrast(input_2d, lower=0.5, upper=1.5)   # lower=0.2, upper=1.8)  caffe 0.3~1.5
+    input_2d = tf.image.random_brightness(input_2d, max_delta=32./255.)   # 64./255. 32./255.)  caffe -30~50
+    input_2d = tf.image.random_contrast(input_2d, lower=0.3, upper=1.5)   # lower=0.2, upper=1.8)  caffe 0.3~1.5
     input_2d = tf.clip_by_value(input_2d, clip_value_min=0.0, clip_value_max=1.0)
 
     return input_2d, result2dmap

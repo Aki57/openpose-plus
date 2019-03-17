@@ -47,6 +47,7 @@ n_pos = config.MODEL.n_pos
 xdim = config.MODEL.xdim
 ydim = config.MODEL.ydim
 zdim = config.MODEL.zdim
+sigma = config.MODEL.sigma
 b_slim = config.MODEL.use_slim
 
 
@@ -69,11 +70,11 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     result = tf.reshape(result, [batch_size, n_pos, 3])
     mask = tf.reshape(mask, [batch_size, n_pos])
 
-    # ori
-    grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
-    # # mid and not norm
-    # grid = tf.meshgrid(tf.range(-xdim/2.0, xdim/2), tf.range(-ydim/2.0, ydim/2), tf.range(-zdim/2.0, zdim/2), indexing='ij')
-    # # mid and norm
+    # # ori
+    # grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+    # mid and not norm (0)
+    grid = tf.meshgrid(tf.range(-xdim/2+0.5, xdim/2), tf.range(-ydim/2+0.5, ydim/2), tf.range(-zdim/2+0.5, zdim/2), indexing='ij')
+    # # mid and norm (1)
     # grid = tf.meshgrid(tf.range(-1.0, 1.0, 2.0/xdim), tf.range(-1.0, 1.0, 2.0/ydim), tf.range(-1.0, 1.0, 2.0/zdim), indexing='ij')
 
     grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
@@ -81,42 +82,51 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
     # define loss
-    losses = []
+    mean_losses = []
+    var_losses = []
     stage_losses = []
 
     for _, voxel in enumerate(voxel_list):
         loss = 0.0
+        mean_loss = 0.0
+        var_loss = 0.0
         for idx in range(batch_size):
+            one_mask = mask[idx,:]
             one_voxel = voxel.outputs[idx,:,:,:,:]
+            mean, variance = tf.nn.moments(one_voxel, [0,1,2])
+            mean_loss += tf.nn.l2_loss(mean * one_mask)
+            var_loss += tf.nn.l2_loss(tf.nn.relu((variance - sigma*sigma) * one_mask))
+
             one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
             one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
             one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
 
-            # ori
-            one_result = tf.transpose(result[idx,:,:])
-            # # mid and not norm
-            # one_result = tf.transpose(result[idx,:,:]) - 32
-            # one_result = tf.transpose(result[idx,:,:]) - 31.5
-            # # mid and norm
-            # one_result = (tf.transpose(result[idx,:,:]) - 32) / 64
+            # # ori
+            # one_result = tf.transpose(result[idx,:,:])
+            # mid and not norm (0)
+            one_result = tf.transpose(result[idx,:,:]) - 31.5
+            # # mid and norm (1)
+            # one_result = (tf.transpose(result[idx,:,:]) - 31.5) / 31.5
 
-            pred_loss = tf.nn.l2_loss((one_pred - one_result) * mask[idx,:])
-            loss += pred_loss
-        losses.append(loss)
+            loss += tf.nn.l2_loss((one_pred - one_result) * one_mask)
+
+        mean_losses.append(mean_loss / batch_size)
+        var_losses.append(var_loss / batch_size)
         stage_losses.append(loss / batch_size)
 
-    last_voxel = head_net.outputs
     l2_loss = 0.0
-
     for p in tl.layers.get_variables_with_name('W_', True, True):
         l2_loss += tf.contrib.layers.l2_regularizer(weight_decay_factor)(p)
-    head_loss = tf.reduce_sum(losses) / batch_size + l2_loss
+
+    head_loss = tf.reduce_sum(mean_losses) +  tf.reduce_sum(var_losses) +  tf.reduce_sum(stage_losses) + l2_loss
 
     head_net.input = input  # base_net input
-    head_net.last_voxel = last_voxel  # base_net output
+    head_net.last_voxel = head_net.outputs  # base_net output
     head_net.mask = mask
     head_net.voxels = result  # GT
     head_net.stage_losses = stage_losses
+    head_net.mean_losses = mean_losses
+    head_net.var_losses = var_losses
     head_net.l2_loss = l2_loss
     return head_net, head_loss
 
@@ -124,12 +134,7 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
     # Argument of depth image
-    try:
-        dep_img = sio.loadmat(depth_list)['depthim_incolor']
-    except:
-        print("[Except] The depth file is broken : ", depth_list)
-        dep_img = np.zeros((1080, 1920))
-
+    dep_img = sio.loadmat(depth_list)['depthim_incolor']
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
     # TODO：可以继续添加不同程度的遮挡
@@ -156,7 +161,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
     voxel_coords2d, voxel_coords3d, voxel_coordsvis = np.array(coords2d), np.array(coords3d), np.array(coordsvis) 
 
-    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), 3.0, voxel_coordsvis)
+    heatmap_kp, voxel_coordsvis = get_kp_heatmap(voxel_coords2d, (xdim, ydim), sigma, voxel_coordsvis)
     voxel_kp = np.tile(np.expand_dims(heatmap_kp, 2), [1, 1, zdim, 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
@@ -189,6 +194,8 @@ def train(training_dataset, epoch, n_step):
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
     voxel = head_net.last_voxel
     stage_losses = head_net.stage_losses
+    mean_losses = head_net.mean_losses
+    var_losses = head_net.var_losses
     l2_loss = head_net.l2_loss
 
     new_lr_decay = lr_decay_factor**((epoch-1)*n_step // lr_decay_interval)
@@ -221,24 +228,32 @@ def train(training_dataset, epoch, n_step):
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
                 print('lr decay to {}'.format(lr_init*new_lr_decay))
 
-            [_, _voxel, _loss, _stage_losses, _l2] = sess.run([train_op, voxel, head_loss, stage_losses, l2_loss])
+            [_, _voxel, _loss, _stage_losses, _mean_losses, _var_losses, _l2] = sess.run([train_op, voxel, head_loss, stage_losses, mean_losses, var_losses, l2_loss])
 
             lr = sess.run(lr_v)
             print('Training loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
-            for ix, sl in enumerate(_stage_losses):
-                print('Network#', ix, 'Loss:', sl)
+            for ix, (sl, ml, vl) in enumerate(zip(_stage_losses, _mean_losses, _var_losses)):
+                print('Network#', ix, 'Loss:', sl, 'Mean Loss:', ml, 'Var Loss:', vl)
 
-            # grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
-            # grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
-            # for idx in range(batch_size):
-            #     one_voxel = _voxel[idx,:,:,:,:]
-            #     max_voxel = np.max(one_voxel,(0,1,2))
-            #     exp_voxel = np.exp(one_voxel) / np.exp(max_voxel) # 防止数值溢出
-            #     sum_voxel = np.sum(exp_voxel, (0,1,2))
-            #     norm_voxel = exp_voxel / sum_voxel
-            #     one_pred = norm_voxel * grid
-            #     one_pred = np.sum(one_pred, (1,2,3))
+            if np.isnan(_loss):
+                grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
+                grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
+                for idx in range(batch_size):
+                    one_voxel = _voxel[idx,:,:,:,:]
+                    max_voxel = np.max(one_voxel,(0,1,2))
+                    exp_voxel = np.exp(one_voxel) / np.exp(max_voxel) # 防止数值溢出
+                    sum_voxel = np.sum(exp_voxel, (0,1,2))
+                    norm_voxel = exp_voxel / sum_voxel
+                    
+                    if np.isnan(exp_voxel).all():
+                        nan_pos = np.where(exp_voxel==np.nan)
+                        print('nan_pos is:\n', nan_pos)
+                        print('one_voxel(nan_pos) is:\n', one_voxel(nan_pos))
+                        print('exp_voxel(nan_pos) is:\n', exp_voxel(nan_pos))
+                        print('norm_voxel(nan_pos) is:\n', norm_voxel(nan_pos))
+
+                break
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):
@@ -282,7 +297,7 @@ def evaluate(evaluating_dataset, epoch, n_step):
             [_loss, _l2] = sess.run([head_loss, l2_loss])
 
             step += 1
-            if _loss == _l2:
+            if _loss == _l2 or np.isnan(_loss):
                 invalid_count += 1
             else:
                 sum_loss += _loss
@@ -292,8 +307,9 @@ def evaluate(evaluating_dataset, epoch, n_step):
                 break
 
         # evaluating finished
-        avg_loss = sum_loss / (n_step-invalid_count)
-        print('Total validation average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
+        if n_step > invalid_count:
+            avg_loss = sum_loss / (n_step-invalid_count)
+            print('Total validation average loss at epoch {} is: {} Took: {}s'.format(epoch, avg_loss, time.time() - tic))
 
 
 if __name__ == '__main__':

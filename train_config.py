@@ -5,10 +5,10 @@ from easydict import EasyDict as edict
 config = edict()
 
 config.TRAIN = edict()
-config.TRAIN.train_stage = '3d'  # 2d, 3d stage
+config.TRAIN.train_stage = '2d'  # 2d, 3d stage
 config.TRAIN.train_mode = 'single'  # single, parallel
 config.TRAIN.node_num = 2  # indicate num of parallel gpus or cpus
-config.TRAIN.n_epoch = 25
+config.TRAIN.n_epoch = 5
 config.TRAIN.save_interval = 5000 # 5000
 
 config.MODEL = edict()
@@ -27,7 +27,8 @@ if config.TRAIN.train_stage == '2d':
     config.MODEL.hout = int(config.MODEL.hin / 8)  # output size during training (default 46)
     config.MODEL.wout = int(config.MODEL.win / 8)
     config.MODEL.name = 'hao28_experimental'  # vgg, vggtiny, mobilenet, hao28_experimental
-    config.MODEL.model_path = 'models/2d'  # save directory
+    config.MODEL.model_path = 'models/training'  # store directory
+    # config.MODEL.store_path = 'models/2d'  # store directory
     if (config.MODEL.hin % 16 != 0) or (config.MODEL.win % 16 != 0):
         raise Exception("image size should be divided by 16")
 
@@ -43,8 +44,10 @@ elif config.TRAIN.train_stage == '3d':
     config.MODEL.xdim = 64
     config.MODEL.ydim = 64
     config.MODEL.zdim = 64
+    config.MODEL.sigma = 3.0
     config.MODEL.name = 'voxelposenet'  # voxelposenet, pixelposenet
-    config.MODEL.model_path = 'models/3d'  # save directory
+    config.MODEL.model_path = 'models/training'  # store directory
+    # config.MODEL.store_path = 'models/3d'  # store directory
     config.MODEL.use_slim = False
 
 else:

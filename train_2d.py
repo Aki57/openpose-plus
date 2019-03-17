@@ -37,11 +37,11 @@ tl.files.exists_or_mkdir(config.MODEL.model_path, verbose=False)  # to save mode
 # define hyper-parameters for training
 node_num = config.TRAIN.node_num
 batch_size = config.TRAIN.batch_size
-lr_decay_interval = config.TRAIN.lr_decay_interval
 n_step = config.TRAIN.n_step
 save_interval = config.TRAIN.save_interval
 weight_decay_factor = config.TRAIN.weight_decay_factor
 lr_init = config.TRAIN.lr_init
+lr_decay_interval = config.TRAIN.lr_decay_interval
 lr_decay_factor = config.TRAIN.lr_decay_factor
 
 # FIXME: Don't use global variables.
@@ -54,12 +54,12 @@ hout = config.MODEL.hout
 wout = config.MODEL.wout
 
 
-def get_pose_data_list(data_path, metas_filename):
+def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     """
     data_path : image and anno folder name
     """
     print("[x] Get pose data from {}".format(data_path))
-    data = PoseInfo(data_path, metas_filename)
+    data = PoseInfo(data_path, metas_filename, min_count, min_score)
     rgbs_file_list, depths_file_list, anno2ds_list = data.get_2d_data_list()
     if len(rgbs_file_list) != len(anno2ds_list) or len(depths_file_list) != len(anno2ds_list):
         raise Exception("number of images, cameras and annotations do not match")
@@ -78,7 +78,7 @@ def make_model(input, results, is_train=True, reuse=False):
     losses = []
     stage_losses = []
 
-    for idx, (l1, l2) in enumerate(zip(b1_list, b2_list)):
+    for _, (l1, l2) in enumerate(zip(b1_list, b2_list)):
         loss_l1 = tf.nn.l2_loss(l1.outputs - confs)
         loss_l2 = tf.nn.l2_loss(l2.outputs - pafs)
 
@@ -177,14 +177,13 @@ def single_train(training_dataset):
     stage_losses = base_net.stage_losses
     l2_loss = base_net.l2_loss
 
-    global_step = tf.Variable(1, trainable=False)
     print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
         n_step, batch_size, lr_init, lr_decay_interval))
-    with tf.variable_scope('learning_rate'):
-        lr_v = tf.Variable(lr_init, trainable=False)
 
-    opt = tf.train.MomentumOptimizer(lr_v, 0.9)
-    train_op = opt.minimize(base_loss, global_step=global_step)
+    lr_v = tf.Variable(lr_init, trainable=False, name='learning_rate')
+    global_step = tf.Variable(1, trainable=False)
+    train_op = tf.train.MomentumOptimizer(lr_v, 0.9).minimize(base_loss, global_step=global_step)
+
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
 
     # start training
@@ -245,8 +244,9 @@ if __name__ == '__main__':
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
-                if 'KINECTNODE' in folder:
-                    _rgbs_file_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder,'meta.mat')
+                if config.DATA.image_path in folder:
+                    _rgbs_file_list, _depths_file_list, _anno2ds_list = \
+                        get_pose_data_list(folder, config.DATA.anno_name, 5, 0.25)
                     sum_rgbs_file_list.extend(_rgbs_file_list)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
