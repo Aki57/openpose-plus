@@ -126,7 +126,7 @@ def model(x, n_pos, reuse=False, use_slim=False, data_format='channels_last'):
 
             if len(scorevolume_list) != 0:
                 scorevolume = ElementwiseLayer([scorevolume, scorevolume_list[-1]], combine_fn=tf.add, name='add')
-            # scorevolume = BatchNormLayer(scorevolume, is_train=bool(1-reuse), name='bn%d'%block_id)
+            scorevolume = BatchNormLayer(scorevolume, is_train=bool(1-reuse), name='bn%d'%block_id)
             scorevolume_list.append(scorevolume)
 
         return scorevolume_list, scorevolume_list[-1]

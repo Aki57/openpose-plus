@@ -5,10 +5,10 @@ from easydict import EasyDict as edict
 config = edict()
 
 config.TRAIN = edict()
-config.TRAIN.train_stage = '2d'  # 2d, 3d stage
+config.TRAIN.train_stage = '3d'  # 2d, 3d stage
 config.TRAIN.train_mode = 'single'  # single, parallel
 config.TRAIN.node_num = 2  # indicate num of parallel gpus or cpus
-config.TRAIN.n_epoch = 5
+config.TRAIN.n_epoch = 25
 config.TRAIN.save_interval = 5000 # 5000
 
 config.MODEL = edict()

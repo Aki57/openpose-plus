@@ -6,6 +6,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
+import scipy.misc as smc
 import tensorflow as tf
 from train_config import config
 
@@ -225,6 +226,50 @@ class Camera:
         """ Turns the homogeneous coordinates [N, D+1] into [N, D]. """
         coords = coords_h[:, :-1] / (coords_h[:, -1:] + 1e-10)
         return coords
+
+
+def read_depth(dep_path):
+    """Load depth image of diff type."""
+    if '.mat' in dep_path:
+        dep_img = sio.loadmat(dep_path)['depthim_incolor']
+    elif '.png' in dep_path:
+        dep_img = smc.imread(dep_path)
+    else:
+        raise Exception('Unknown depth format')
+    return dep_img
+
+
+def argue_depth(depth_map):
+    """Add block randomly in depth image."""
+    height, width = depth_map.shape
+    max_depth = np.amax(depth_map)
+
+    if np.random.uniform() > 0.75:
+        w0, w1 = np.random.randint(width/4, size=2)
+        h0, h1 = np.random.randint(height/2, size=2)
+        depth = np.random.uniform(0.5, 1.0)*max_depth
+
+        mask1 = np.zeros_like(depth_map, dtype=np.bool)
+        mask1[h0:height-h1, w0:width-w1] = True
+        mask2 = depth_map > depth
+        mask = np.logical_and(mask1, mask2)
+        depth_map[mask] = depth
+
+    if np.random.uniform() > 0.5:
+        rand_w, rand_h = np.random.randint(width/3, size=2)
+        w0 = np.random.randint(width-rand_w)
+        h0 = np.random.randint(height-rand_h)
+        depth = np.random.uniform(0.25, 0.75)*max_depth
+
+        mask1 = np.zeros_like(depth_map, dtype=np.bool)
+        mask1[h0:h0+rand_h, w0:w0+rand_w] = True
+        mask2 = depth_map > depth
+        mask = np.logical_and(mask1, mask2)
+        depth_map[mask] = depth
+
+    # TODO：增加高斯噪声
+
+    return depth_map
 
 
 def _get_depth_value(map, coord2d, crop_size=25):
@@ -781,7 +826,7 @@ def vis_annos(image, annos, name=''):
                 plt.plot(jo[0], jo[1], '*')
 
     mkpath(config.LOG.vis_path)
-    plt.savefig(os.path.join(config.LOG.vis_path, 'keypoints%s%d.png' % (name, i)), dpi=300)
+    plt.savefig(os.path.join(config.LOG.vis_path, 'keypoints%s.png' % (name)), dpi=300)
 
 
 def tf_repeat(tensor, repeats):

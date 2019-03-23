@@ -100,24 +100,30 @@ def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path,
     e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, (x_size, y_size, z_size), False), 'create Pose3DEstimator')
 
     time0 = time.time()
-    for idx, (rgb_name, dep_name, cam_info, joints3d) in enumerate(zip(rgb_files, dep_files, cam_list, joint3d_list)):
+    for _, (rgb_name, dep_name, cam_info, joints3d) in enumerate(zip(rgb_files, dep_files, cam_list, joint3d_list)):
         input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
         humans, _, _ = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
 
         cam_calib =  Camera(cam_info['K'], cam_info['distCoef'])
-        for h, (pred_2d, gt_3d) in enumerate(zip(humans, joints3d)):
+        for h, pred_2d in enumerate(humans):
             coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(pred_2d.body_parts, init_w, init_h)
             input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, x_size, y_size, z_size), 'read_3dfiles')
-            coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
-            coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
-            coords3d_pred_proj = cam_calib.unproject(coords2d, coords3d_pred[:, -1])
+            
+            # coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
+            # coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
+            # coords3d_pred_proj = cam_calib.unproject(coords2d, coords3d_pred[:, -1])
+            # cond = coords2d_conf > coords3d_conf  # use backproj only when 2d was visible and 2d/3d roughly matches
+            # coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]
+            # coords3d_conf[cond] = coords2d_conf[cond]
 
-            cond = coords2d_conf > coords3d_conf  # use backproj only when 2d was visible and 2d/3d roughly matches
-            coords3d_pred[cond, :] = coords3d_pred_proj[cond, :]
-            coords3d_conf[cond] = coords2d_conf[cond]
+            coords3d = measure(lambda: e_3d.regression(input_3d), 'e_3d.inference')
+            coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
+
             plot_human3d(rgb_name, dep_name, coords3d_pred, cam_calib, 'pre%d'%h, coords2d_vis)
-            plot_human3d(rgb_name, dep_name, gt_3d[:18], Camera(cam_info['K'], cam_info['distCoef']), 'gt%d'%h)
+
+        for h, gt_3d in enumerate(joints3d):
+            plot_human3d(rgb_name, dep_name, gt_3d[:18], cam_calib, 'gt%d'%h)
 
         do_plot()
 
@@ -126,11 +132,11 @@ def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path,
 
 
 if __name__ == '__main__':
-    base_npz_path = 'models/2d/openposenet-1.npz' # str, default='', help='path to npz', required=True
+    base_npz_path = 'models/2d/hao28-pose-average.npz' # str, default='', help='path to npz', required=True
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
-    head_npz_path = 'models/3d/voxelposenet-False.npz' # str, default='', help='path to npz', required=True
+    head_npz_path = 'models/3d/re/voxelposenet-25.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
-    interval = 100 # int, default=1, help='sample times of images.'
+    interval = 50 # int, default=1, help='sample times of images.'
 
     _rgb_files, _dep_files, _cam_list, _joint3d_list  = get_files('f:/Lab/dataset/panoptic-toolbox/data')
     rgb_files = (_rgb_files)[::interval] # list of str, default='', help='comma separate list of image filenames', required=True

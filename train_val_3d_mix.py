@@ -64,59 +64,61 @@ def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     return depths_file_list, cams_list, anno2ds_list, anno3ds_list
 
 
-def make_model(input, result, mask, reuse=False, use_slim=False):
+def make_model(input, output, result, mask, reuse=False, use_slim=False):
     input = tf.reshape(input, [batch_size, xdim, ydim, zdim, n_pos+1])
+    output = tf.reshape(output, [batch_size, xdim, ydim, zdim, n_pos])
     result = tf.reshape(result, [batch_size, n_pos, 3])
     mask = tf.reshape(mask, [batch_size, n_pos])
 
+    # ori
     grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
+    # mid and not norm
+    # grid = tf.meshgrid(tf.range(-xdim/2+0.5, xdim/2), tf.range(-ydim/2+0.5, ydim/2), tf.range(-zdim/2+0.5, zdim/2), indexing='ij')
     grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
     # define loss
-    mean_losses = []
-    var_losses = []
     stage_losses = []
 
     for _, voxel in enumerate(voxel_list):
         loss = 0.0
-        mean_loss = 0.0
-        var_loss = 0.0
         for idx in range(batch_size):
-            one_mask = mask[idx,:]
+            # one_voxel = voxel.outputs[idx,:,:,:,:]
+            # loss += tf.nn.l2_loss((one_voxel - output[idx,:,:,:,:]) * mask[idx,:]) # loss 1
+
             one_voxel = voxel.outputs[idx,:,:,:,:]
-            mean, variance = tf.nn.moments(one_voxel, [0,1,2])
-            mean_loss += tf.nn.l2_loss(mean * one_mask)
-            var_loss += tf.nn.l2_loss(tf.nn.relu((variance - 1.0) * one_mask))
+            one_output = output[idx,:,:,:,:]
+            one_voxel = one_voxel - tf.reduce_min(one_voxel,[0,1,2]) + 1e-20
+            one_output = one_output - tf.reduce_min(one_output,[0,1,2]) + 1e-20
+            one_mean = (one_voxel + one_output) / 2
+            js_diverg = one_voxel*tf.log(one_voxel) + one_output*tf.log(one_output) - 2*one_mean*tf.log(one_mean)
+            loss += 0.01*tf.reduce_sum(js_diverg * mask[idx,:]) / 2 # loss 1
+
             one_voxel = tf.exp(one_voxel - tf.reduce_max(one_voxel,[0,1,2]))
             one_voxel = one_voxel / tf.reduce_sum(one_voxel,[0,1,2])
             one_pred = tf.reduce_sum(one_voxel * grid, [1,2,3])
-            loss += tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * one_mask)
-        mean_losses.append(mean_loss / batch_size)
-        var_losses.append(var_loss / batch_size)
+            loss += tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:]) # loss 2
         stage_losses.append(loss / batch_size)
 
     l2_loss = 0.0
     for p in tl.layers.get_variables_with_name('W_', True, True):
         l2_loss += tf.contrib.layers.l2_regularizer(weight_decay_factor)(p)
-
-    head_loss = tf.reduce_sum(stage_losses) + l2_loss + tf.reduce_sum(mean_losses) + tf.reduce_sum(var_losses)
+    head_loss = tf.reduce_sum(stage_losses) + l2_loss
 
     head_net.input = input  # base_net input
     head_net.last_voxel = head_net.outputs  # base_net output
+    head_net.output = output
     head_net.mask = mask
     head_net.result = result  # GT
     head_net.stage_losses = stage_losses
-    head_net.mean_losses = mean_losses
-    head_net.var_losses = var_losses
     head_net.l2_loss = l2_loss
     return head_net, head_loss
 
 
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
-    # Augmentation of depth image
+    # Argument of depth image
     dep_img = read_depth(depth_list.decode())
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
@@ -132,13 +134,13 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
-    # Augmentation of voxels and keypoints
+    # Argument of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
     rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
     voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
-    if np.random.uniform() > 0.5:
+    if np.random.uniform(0, 1.0) > 0.5:
         voxel_grid = np.flip(voxel_grid, axis=0)
         coords2d, coordsvis = keypoint_flip(coords2d, (xdim, ydim), 0, coordsvis)
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
@@ -149,22 +151,26 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
 
+    output_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), sigma, voxel_coordsvis)
+
     input_3d = np.array(input_3d, dtype=np.float32)
+    output_3d = np.array(output_3d, dtype=np.float32)
     result_3d = np.array(voxel_coords3d, dtype=np.float32)
     mask_vis = np.array(voxel_coordsvis, dtype=np.float32)
 
-    return input_3d, result_3d, mask_vis
+    return input_3d, output_3d, result_3d, mask_vis
 
 
 def _map_fn(depth_list, cams, anno2ds, anno3ds):
     """TF Dataset pipeline."""
-    input_3d, result_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32])
+    input_3d, output_3d, result_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32, tf.float32])
 
     input_3d = tf.reshape(input_3d, [xdim, ydim, zdim, n_pos+1])
+    output_3d = tf.reshape(output_3d, [xdim, ydim, zdim, n_pos])
     result_3d = tf.reshape(result_3d, [n_pos, 3])
     mask_vis = tf.reshape(mask_vis, [n_pos])
 
-    return input_3d, result_3d, mask_vis
+    return input_3d, output_3d, result_3d, mask_vis 
 
 
 def train(training_dataset, epoch, n_step):
@@ -175,12 +181,9 @@ def train(training_dataset, epoch, n_step):
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
-    voxel = head_net.last_voxel
-    result = head_net.result
-    mask = head_net.mask
+    pre_voxel = head_net.last_voxel
+    gt_voxel = head_net.output
     stage_losses = head_net.stage_losses
-    mean_losses = head_net.mean_losses
-    var_losses = head_net.var_losses
     l2_loss = head_net.l2_loss
 
     new_lr_decay = lr_decay_factor**((epoch-1)*n_step // lr_decay_interval)
@@ -213,35 +216,45 @@ def train(training_dataset, epoch, n_step):
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
                 print('lr decay to {}'.format(lr_init*new_lr_decay))
 
-            [_, _voxel, _result, _mask, _loss, _stage_losses, _mean_losses, _var_losses, _l2] = sess.run([train_op, voxel, result, mask, head_loss, stage_losses, mean_losses, var_losses, l2_loss])
+            [_, _pre_voxel, _gt_voxel, _loss, _stage_losses, _l2] = sess.run([train_op, pre_voxel, gt_voxel, head_loss, stage_losses, l2_loss])
 
             lr = sess.run(lr_v)
             print('Training loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
-            for ix, (sl, ml, vl) in enumerate(zip(_stage_losses, _mean_losses, _var_losses)):
-                print('Network#', ix, 'Loss:', sl, 'Mean Loss:', ml, 'Var Loss:', vl)
+            for ix, sl in enumerate(_stage_losses):
+                print('Network#', ix, 'Loss:', sl)
 
-            # regression loss check
-            grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
-            grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
-            loss = 0.0
-            for idx in range(batch_size):
-                one_mask = _mask[idx,:]
-                one_voxel = _voxel[idx,:,:,:,:]
-                exp_voxel = np.exp(one_voxel - np.max(one_voxel,(0,1,2))) # 防止数值溢出
-                norm_voxel = exp_voxel / np.sum(exp_voxel, (0,1,2))
-                one_pred = np.sum(norm_voxel * grid, (1,2,3))
-                one_result = np.transpose(_result[idx,:,])
-                one_dist = (one_pred - one_result) * one_mask
-                loss += np.sum(np.square(one_dist))
-                
-                if np.isnan(exp_voxel).any():
-                    nan_pos = np.stack(np.where(np.isnan(exp_voxel)), 1)
-                    for i in range(nan_pos.shape[0]):
-                        print('nan_pos is:\n', nan_pos[i,:])
-                        print('one_voxel(nan_pos) is:\n', one_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
-                        print('exp_voxel(nan_pos) is:\n', exp_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
-                        print('norm_voxel(nan_pos) is:\n', norm_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
+            if np.isnan(_loss):
+                # # regression loss check
+                # grid = np.array(np.meshgrid(range(xdim), range(ydim), range(zdim), indexing='ij'), dtype=np.float)
+                # grid = np.tile(np.expand_dims(grid,-1), [1,1,1,1,n_pos])
+                # for idx in range(batch_size):
+                #     one_voxel = _pre_voxel[idx,:,:,:,:]
+                #     exp_voxel = np.exp(one_voxel - np.max(one_voxel,(0,1,2))) # 防止数值溢出
+                #     norm_voxel = exp_voxel / np.sum(exp_voxel, (0,1,2))
+                    
+                #     if np.isnan(exp_voxel).any():
+                #         nan_pos = np.stack(np.where(np.isnan(exp_voxel)), 1)
+                #         for i in range(nan_pos.shape[0]):
+                #             print('nan_pos is:\n', nan_pos[i,:])
+                #             print('one_voxel(nan_pos) is:\n', one_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
+                #             print('exp_voxel(nan_pos) is:\n', exp_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
+                #             print('norm_voxel(nan_pos) is:\n', norm_voxel[nan_pos[i,0],nan_pos[i,1],nan_pos[i,2],nan_pos[i,3]])
+
+                # JS divergence check
+                for idx in range(batch_size):
+                    one_voxel = _pre_voxel[idx,:,:,:,:]
+                    one_output = _gt_voxel[idx,:,:,:,:]
+                    one_voxel = one_voxel - np.amin(one_voxel,[0,1,2]) + 1e-20
+                    one_output = one_output - np.amin(one_output,[0,1,2]) + 1e-20
+                    one_mean = (one_voxel + one_output) / 2
+                    js_diverg_1 = one_voxel*tf.log(one_voxel)
+                    js_diverg_2 = one_output*tf.log(one_output)
+                    js_diverg_3 = -2*one_mean*tf.log(one_mean)
+
+                    loss = np.sum((js_diverg_1 + js_diverg_2 + js_diverg_3) / 2) 
+
+                break
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):

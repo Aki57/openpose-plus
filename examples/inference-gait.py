@@ -128,7 +128,7 @@ def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
         input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
         humans, heatMap, pafMap = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
-        # plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
+        plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
 
         if len(humans):
             coords2d, _, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h, 0.1)
@@ -180,12 +180,12 @@ def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path,
 
 
 if __name__ == '__main__':
-    base_npz_path = 'models/2d/openposenet-10.npz' # str, default='', help='path to npz', required=True
+    base_npz_path = 'models/2d/hao28-pose-average.npz' # str, default='', help='path to npz', required=True
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
-    head_npz_path = 'models/3d/voxelposenet-6.npz' # str, default='', help='path to npz', required=True
+    head_npz_path = 'models/3d/voxelposenet-False.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
 
-    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database', '2color', '2depth', 'kinect2.txt')
-    inference_2d(base_model, base_npz_path, rgb_files, dep_files)
-    # inference_3d(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info)
+    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database', '2color', '2depth/filter', 'kinect2.txt')
+    # inference_2d(base_model, base_npz_path, rgb_files, dep_files)
+    inference_3d(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info)
     # inference_data(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info)

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap
+from openpose_plus.utils import PoseInfo, read_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap
 
 voxel_f = 1.2
 heatmap_sigma = 3.0
@@ -41,17 +41,6 @@ CocoPairs = [(1, 2), (2, 3), (3, 4),  # right arm
 CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
               [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255],
               [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
-
-
-def read_depth(dep_path):
-    """smooth depth image by matlab interpret."""
-    if '.mat' in dep_path:
-        from scipy.io import loadmat
-        dep_img = loadmat(dep_path)['depthim_incolor']
-    else:
-        from scipy.misc import imread
-        dep_img = imread(dep_path)
-    return dep_img
 
 
 def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last'):

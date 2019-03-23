@@ -29,7 +29,7 @@ def get_files(data_path):
     return sum_rgbs_list, sum_depths_list, sum_cams_list
 
 
-def checkfiles(rgb_files, dep_files, cam_list):
+def check_files(rgb_files, dep_files, cam_list):
     time0 = time.time()
     for _, (rgb_name, dep_name, cam_info) in enumerate(zip(rgb_files, dep_files, cam_list)):
         import scipy.io as sio
@@ -53,8 +53,8 @@ def checkfiles(rgb_files, dep_files, cam_list):
 
 
 def main():
-    _rgb_files, _dep_files, _cam_list = get_files('data/cmu_dataset')
-    checkfiles(_rgb_files, _dep_files, _cam_list)
+    _rgb_files, _dep_files, _cam_list = get_files('f:/Lab/dataset/panoptic-toolbox/data')
+    check_files(_rgb_files, _dep_files, _cam_list)
 
 
 if __name__ == '__main__':
