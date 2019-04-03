@@ -59,17 +59,17 @@ class CmuMeta:
             valid_count = 0
 
             for idx in transform:
-                if score[idx] >= min_score or p2d[idx][0] in range(0, 1920) or p2d[idx][1] in range(0, 1080):
+                if score[idx] >= min_score and int(p2d[idx][0]) in range(0, 1920) and int(p2d[idx][1]) in range(0, 1080):
                     valid_count = valid_count + 1
                     new_joints2d.append(p2d[idx])
                     new_joints3d.append(p3d[idx])
                 else:
-                    new_joints2d.append((-1000, -1000))
-                    new_joints3d.append((0, 0, -1000))
+                    new_joints2d.append(np.array([-1000, -1000]))
+                    new_joints3d.append(np.array([0, 0, -1000]))
 
             # for background
-            new_joints2d.append((-1000, -1000))
-            new_joints3d.append((0, 0, -1000))
+            new_joints2d.append(np.array([-1000, -1000]))
+            new_joints3d.append(np.array([0, 0, -1000]))
 
             # min threshold for joint count
             if valid_count < min_count:
@@ -239,7 +239,7 @@ def read_depth(dep_path):
     return dep_img
 
 
-def argue_depth(depth_map):
+def aug_depth(depth_map):
     """Add block randomly in depth image."""
     height, width = depth_map.shape
     max_depth = np.amax(depth_map)
@@ -482,22 +482,20 @@ def keypoints_affine(coords, transform_matrix):
 
 def keypoint_flip(coords, output_size, axis=0, coords_vis=None, flip_list=(0, 1, 5, 6, 7, 2, 3, 4, 11, 12, 13, 8, 9, 10, 15, 14, 17, 16)):
     new_coords = []
+    new_coords_vis = []
+
     for k in flip_list:
         point = coords[k]
-        cond =  True if coords_vis is None else coords_vis[k]
+        point[axis] = output_size[axis] - point[axis]
 
+        cond = True if coords_vis is None else coords_vis[k]
         for i in range(len(output_size)):
-            if cond:
-                cond = cond and (point[i] < 0 or point[i] > output_size[i]-1)
-            else:
-                break
-        if cond:
-            point[axis] = output_size[axis]-1-point[axis]
-            new_coords.append(point)
-        else:
-            coords_vis[k] = False
-            new_coords.append([-output_size[0]]*len(output_size))
-    return new_coords, coords_vis
+            cond = cond and int(point[i]) in range(0, output_size[i])
+
+        new_coords_vis.append(cond)
+        new_coords.append(point if cond else [-output_size[0]]*len(output_size))
+
+    return new_coords, new_coords_vis
 
 
 def get_heatmap(annos, height, width):

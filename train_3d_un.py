@@ -22,7 +22,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
+from openpose_plus.utils import PoseInfo, read_depth, aug_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -69,33 +69,29 @@ def get_pose_data_list(data_path, metas_filename, min_count, min_score):
     return depths_file_list, cams_list, anno2ds_list, anno3ds_list
 
 
-def make_model(input, result, mask, reuse=False, use_slim=False):
+def make_model(input, output, mask, reuse=False, use_slim=False):
     input = tf.reshape(input, [batch_size, xdim, ydim, zdim, n_pos+1])
-    result = tf.reshape(result, [batch_size, xdim, ydim, zdim, n_pos])
+    output = tf.reshape(output, [batch_size, xdim, ydim, zdim, n_pos])
     mask = tf.reshape(mask, [batch_size, xdim, ydim, zdim, n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
     # define loss
-    losses = []
     stage_losses = []
 
     for _, voxel in enumerate(voxel_list):
-        loss = tf.nn.l2_loss((voxel.outputs - result) * mask)
-        losses.append(loss)
+        loss = tf.nn.l2_loss((voxel.outputs - output) * mask)
         stage_losses.append(loss / batch_size)
 
-    last_voxel = head_net.outputs
     l2_loss = 0.0
-
     for p in tl.layers.get_variables_with_name('W_', True, True):
         l2_loss += tf.contrib.layers.l2_regularizer(weight_decay_factor)(p)
-    head_loss = tf.reduce_sum(losses) / batch_size + l2_loss
+    head_loss = tf.reduce_sum(stage_losses) + l2_loss
 
     head_net.input = input  # base_net input
-    head_net.last_voxel = last_voxel  # base_net output
+    head_net.last_voxel = head_net.outputs  # base_net output
     head_net.mask = mask
-    head_net.voxels = result  # GT
+    head_net.voxels = output  # GT
     head_net.stage_losses = stage_losses
     head_net.l2_loss = l2_loss
     return head_net, head_loss
@@ -103,16 +99,11 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
 
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
-    # Argument of depth image
-    try:
-        dep_img = sio.loadmat(depth_list)['depthim_incolor']
-    except:
-        print("[Except] The depth file is broken : ", depth_list)
-        dep_img = np.zeros((1080, 1920))
-
+    # Augmentation of depth image
+    dep_img = read_depth(depth_list.decode())
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
+    dep_img = aug_depth(dep_img)
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
-    # TODO：可以继续添加不同程度的遮挡
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -124,13 +115,13 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
-    # Argument of voxels and keypoints
+    # Augmentation of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
     rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
-    voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
+    voxel_grid = tl.prepro.affine_transform_cv2(voxel_grid.transpose([1, 0, 2]), rotate_matrix).transpose([1, 0, 2])
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
-    if np.random.uniform(0, 1.0) > 0.5:
+    if np.random.uniform() > 0.5:
         voxel_grid = np.flip(voxel_grid, axis=0)
         coords2d, coordsvis = keypoint_flip(coords2d, (xdim, ydim), 0, coordsvis)
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
@@ -141,25 +132,25 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
 
-    result_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), sigma, voxel_coordsvis)
-    mask_vis = np.ones_like(result_3d)*voxel_coordsvis
+    output_3d, voxel_coordsvis = get_3d_heatmap(voxel_coords3d, (xdim, ydim, zdim), sigma, voxel_coordsvis)
+    mask_vis = np.ones_like(output_3d)*voxel_coordsvis
 
     input_3d = np.array(input_3d, dtype=np.float32)
-    result_3d = np.array(result_3d, dtype=np.float32)
+    output_3d = np.array(output_3d, dtype=np.float32)
     mask_vis = np.array(mask_vis, dtype=np.float32)
 
-    return input_3d, result_3d, mask_vis
+    output_3d = np.array(output_3d, dtype=np.float32)
 
 
 def _map_fn(depth_list, cams, anno2ds, anno3ds):
     """TF Dataset pipeline."""
-    input_3d, result_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32])
+    input_3d, output_3d, mask_vis = tf.py_func(_3d_data_aug_fn, [depth_list,cams,anno2ds,anno3ds], [tf.float32, tf.float32, tf.float32])
 
     input_3d = tf.reshape(input_3d, [xdim, ydim, zdim, n_pos+1])
-    result_3d = tf.reshape(result_3d, [xdim, ydim, zdim, n_pos])
+    output_3d = tf.reshape(output_3d, [xdim, ydim, zdim, n_pos])
     mask_vis = tf.reshape(mask_vis, [xdim, ydim, zdim, n_pos])
 
-    return input_3d, result_3d, mask_vis
+    return input_3d, output_3d, mask_vis
 
 
 def single_train(training_dataset):
@@ -248,7 +239,7 @@ if __name__ == '__main__':
                     sum_cams_list.extend(_cams_list)
                     sum_anno2ds_list.extend(_anno2ds_list)
                     sum_anno3ds_list.extend(_anno3ds_list)
-        print("Total number of own images found:", len(sum_depths_file_list))
+        print("Total number of own samples found:", len(sum_depths_file_list))
 
     # define data augmentation
     def generator():

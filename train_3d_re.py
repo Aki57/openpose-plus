@@ -22,7 +22,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
+from openpose_plus.utils import PoseInfo, read_depth, aug_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -80,50 +80,52 @@ def make_model(input, result, mask, reuse=False, use_slim=False):
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
 
     # define loss
-    losses = []
+    mean_losses = []
+    var_losses = []
     stage_losses = []
 
     for _, voxel in enumerate(voxel_list):
         loss = 0.0
-        for idx in range(0, batch_size):
+        mean_loss = 0.0
+        var_loss = 0.0
+        for idx in range(batch_size):
+            one_mask = mask[idx,:]
             one_voxel = voxel.outputs[idx,:,:,:,:]
-            one_pred = tf.exp(one_voxel) / tf.exp(tf.reduce_max(one_voxel,[0,1,2])) # 防止数值溢出
-            one_pred = one_pred / tf.reduce_sum(one_pred, [0,1,2])
-            one_pred = tf.reduce_sum(one_pred * grid, [1,2,3])
-            pred_loss = tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * mask[idx,:])
-            norm_loss = tf.nn.l2_loss(one_voxel * mask[idx,:])
-            loss += pred_loss * 0.1 + norm_loss * 0.01
-        losses.append(loss)
+            mean, variance = tf.nn.moments(one_voxel, [0,1,2])
+            mean_loss += tf.nn.l2_loss(mean * one_mask)
+            var_loss += tf.nn.l2_loss(tf.nn.relu((variance - 1.0) * one_mask))
+            one_voxel = tf.exp(one_voxel - tf.reduce_max(one_voxel,[0,1,2]))
+            one_voxel = one_voxel / tf.reduce_sum(one_voxel,[0,1,2])
+            one_pred = tf.reduce_sum(one_voxel * grid, [1,2,3])
+            loss += tf.nn.l2_loss((one_pred - tf.transpose(result[idx,:,:])) * one_mask)
+        mean_losses.append(mean_loss / batch_size)
+        var_losses.append(var_loss / batch_size)
         stage_losses.append(loss / batch_size)
 
-    last_voxel = head_net.outputs
     l2_loss = 0.0
-
     for p in tl.layers.get_variables_with_name('W_', True, True):
         l2_loss += tf.contrib.layers.l2_regularizer(weight_decay_factor)(p)
-    head_loss = tf.reduce_sum(losses) / batch_size + l2_loss
+
+    head_loss = tf.reduce_sum(stage_losses) + l2_loss + tf.reduce_sum(mean_losses) + tf.reduce_sum(var_losses)
 
     head_net.input = input  # base_net input
-    head_net.last_voxel = last_voxel  # base_net output
+    head_net.last_voxel = head_net.outputs  # base_net output
     head_net.mask = mask
-    head_net.voxels = result  # GT
+    head_net.result = result  # GT
     head_net.stage_losses = stage_losses
+    head_net.mean_losses = mean_losses
+    head_net.var_losses = var_losses
     head_net.l2_loss = l2_loss
     return head_net, head_loss
 
 
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
-    # Argument of depth image
-    try:
-        dep_img = sio.loadmat(depth_list)['depthim_incolor']
-    except:
-        print("[Except] The depth file is broken : ", depth_list)
-        dep_img = np.zeros((1080, 1920))
-
+    # Augmentation of depth image
+    dep_img = read_depth(depth_list.decode())
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
+    # dep_img = aug_depth(dep_img)
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
-    # TODO：可以继续添加不同程度的遮挡
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -135,13 +137,13 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
-    # Argument of voxels and keypoints
+    # Augmentation of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
     rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
-    voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
+    voxel_grid = tl.prepro.affine_transform_cv2(voxel_grid.transpose([1, 0, 2]), rotate_matrix).transpose([1, 0, 2])
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
-    if np.random.uniform(0, 1.0) > 0.5:
+    if np.random.uniform() > 0.5:
         voxel_grid = np.flip(voxel_grid, axis=0)
         coords2d, coordsvis = keypoint_flip(coords2d, (xdim, ydim), 0, coordsvis)
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)
@@ -179,10 +181,9 @@ def single_train(training_dataset):
     iterator = ds.make_one_shot_iterator()
     one_element = iterator.get_next()
     head_net, head_loss = make_model(*one_element, reuse=False, use_slim=b_slim)
-    # x_3d_ = head_net.input  # base_net input
-    # last_voxel = head_net.last_voxel  # base_net output
-    # voxels_ = head_net.voxels  # GT
     stage_losses = head_net.stage_losses
+    mean_losses = head_net.mean_losses
+    var_losses = head_net.var_losses
     l2_loss = head_net.l2_loss
 
     print('Start - n_step: {} batch_size: {} lr_init: {} lr_decay_interval: {}'.format(
@@ -213,13 +214,13 @@ def single_train(training_dataset):
                 new_lr_decay = lr_decay_factor**(step // lr_decay_interval)
                 sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
 
-            [_, _loss, _stage_losses, _l2] = sess.run([train_op, head_loss, stage_losses, l2_loss])
+            [_, _loss, _stage_losses, _mean_losses, _var_losses, _l2] = sess.run([train_op, head_loss, stage_losses, mean_losses, var_losses, l2_loss])
 
             lr = sess.run(lr_v)
             print('Total Loss at iteration {} / {} is: {} Learning rate {:10e} l2_loss {:10e} Took: {}s'.format(
                 step, n_step, _loss, lr, _l2, time.time() - tic))
-            for ix, sl in enumerate(_stage_losses):
-                print('Network#', ix, 'Loss:', sl)
+            for ix, (sl, ml, vl) in enumerate(zip(_stage_losses, _mean_losses, _var_losses)):
+                print('Network#', ix, 'Loss:', sl, 'Mean Loss:', ml, 'Var Loss:', vl)
 
             # save intermediate results and model
             if (step != 0) and (step % save_interval == 0):

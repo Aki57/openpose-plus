@@ -21,7 +21,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, read_depth, argue_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
+from openpose_plus.utils import PoseInfo, read_depth, aug_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -119,8 +119,8 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     # Augmentation of depth image
     dep_img = read_depth(depth_list.decode())
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
+    # dep_img = aug_depth(dep_img)
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
-    # dep_img = argue_depth(dep_img)
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -135,7 +135,7 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     # Augmentation of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
     rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
-    voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
+    voxel_grid = tl.prepro.affine_transform_cv2(voxel_grid.transpose([1, 0, 2]), rotate_matrix).transpose([1, 0, 2])
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
     if np.random.uniform() > 0.5:

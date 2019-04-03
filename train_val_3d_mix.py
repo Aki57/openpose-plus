@@ -21,7 +21,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, read_depth, argue_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
+from openpose_plus.utils import PoseInfo, read_depth, aug_depth, create_voxelgrid, get_3d_heatmap, get_kp_heatmap, keypoint_flip, keypoints_affine
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -70,10 +70,7 @@ def make_model(input, output, result, mask, reuse=False, use_slim=False):
     result = tf.reshape(result, [batch_size, n_pos, 3])
     mask = tf.reshape(mask, [batch_size, n_pos])
 
-    # ori
     grid = tf.meshgrid(tf.range(0.0, xdim), tf.range(0.0, ydim), tf.range(0.0, zdim), indexing='ij')
-    # mid and not norm
-    # grid = tf.meshgrid(tf.range(-xdim/2+0.5, xdim/2), tf.range(-ydim/2+0.5, ydim/2), tf.range(-zdim/2+0.5, zdim/2), indexing='ij')
     grid = tf.tile(tf.expand_dims(grid,-1), [1,1,1,1,n_pos])
 
     voxel_list, head_net = model(input, n_pos, reuse, use_slim)
@@ -118,11 +115,11 @@ def make_model(input, output, result, mask, reuse=False, use_slim=False):
 
 def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     """Data augmentation function."""
-    # Argument of depth image
+    # Augmentation of depth image
     dep_img = read_depth(depth_list.decode())
     dep_img = dep_img / 1000.0 # 深度图以毫米为单位
+    # dep_img = aug_depth(dep_img)
     dep_img = tl.prepro.drop(dep_img, keep=np.random.uniform(0.5, 1.0))
-    # dep_img = argue_depth(dep_img)
 
     cam = cPickle.loads(cam)
     annos2d = list(cPickle.loads(ground_truth2d))[:n_pos]
@@ -134,13 +131,13 @@ def _3d_data_aug_fn(depth_list, cam, ground_truth2d, ground_truth3d):
     voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam, dep_img, annos2d, (xdim, ydim, zdim), 1.2)
     voxel_coords3d = (annos3d - trafo_params['root']) / trafo_params['scale']
 
-    # Argument of voxels and keypoints
+    # Augmentation of voxels and keypoints
     coords2d, coords3d, coordsvis = voxel_coords2d.tolist(), voxel_coords3d.tolist(), voxel_coordsvis.tolist()
     rotate_matrix = tl.prepro.transform_matrix_offset_center(tl.prepro.affine_rotation_matrix(angle=(-15, 15)), x=xdim, y=xdim)
-    voxel_grid = tl.prepro.affine_transform(voxel_grid, rotate_matrix)
+    voxel_grid = tl.prepro.affine_transform_cv2(voxel_grid.transpose([1, 0, 2]), rotate_matrix).transpose([1, 0, 2])
     coords2d = keypoints_affine(coords2d, rotate_matrix)
     coords3d = keypoints_affine(coords3d, rotate_matrix)
-    if np.random.uniform(0, 1.0) > 0.5:
+    if np.random.uniform() > 0.5:
         voxel_grid = np.flip(voxel_grid, axis=0)
         coords2d, coordsvis = keypoint_flip(coords2d, (xdim, ydim), 0, coordsvis)
         coords3d, coordsvis = keypoint_flip(coords3d, (xdim, ydim, zdim), 0, coordsvis)

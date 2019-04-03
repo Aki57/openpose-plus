@@ -39,7 +39,7 @@ def get_model(name):
     elif name == 'mobilenet':
         from .models_mobilenet import model
     elif name == 'mobilenet2':
-        from .models_mobilenet2 import model
+        from .models_mobilenet_v2 import model
     elif name == 'voxelposenet':
         from .models_head_voxelposenet import model
     elif name == 'pixelposenet':

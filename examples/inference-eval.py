@@ -134,7 +134,7 @@ def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path,
 if __name__ == '__main__':
     base_npz_path = 'models/2d/hao28-pose-average.npz' # str, default='', help='path to npz', required=True
     base_model = 'hao28_experimental' # str, default='hao28_experimental', help='mobilenet | mobilenet2 | hao28_experimental'
-    head_npz_path = 'models/3d/re/voxelposenet-25.npz' # str, default='', help='path to npz', required=True
+    head_npz_path = 'models/3d/re/voxelposenet-re.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
     interval = 50 # int, default=1, help='sample times of images.'
 

@@ -22,7 +22,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, get_heatmap, get_vectormap, tf_repeat, draw_results
+from openpose_plus.utils import PoseInfo, read_depth, get_heatmap, get_vectormap, tf_repeat, draw_results
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -106,17 +106,18 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     annos2d = cPickle.loads(ground_truth2d)
     annos2d = list(annos2d)
 
-    depth_image = sio.loadmat(depth_list)['depthim_incolor']
+    rgb_image = 255 - rgb_image if np.random.uniform() < 0.25 else rgb_image
+
+    depth_image = read_depth(depth_list.decode())
     depth_image = depth_image / np.random.uniform(20, 40)
-    percent = np.random.uniform()
-    depth_image = (tl.prepro.drop(depth_image, keep=percent) if percent > 0.75 else depth_image * 0)
+    depth_image = tl.prepro.drop(depth_image, keep=np.random.uniform())
 
     ## 2d data augmentation
     # random transfrom
     M_rotate = tl.prepro.affine_rotation_matrix(angle=(-40, 40))  # original paper: -40~40 -> -30~30
     M_zoom = tl.prepro.affine_zoom_matrix(zoom_range=(0.5, 1.1))  # original paper: 0.5~1.1 -> 0.5~0.8
     M_combined = M_rotate.dot(M_zoom)
-    transform_matrix = tl.prepro.transform_matrix_offset_center(M_combined, x=rgb_image.shape[0], y=rgb_image.shape[1])
+    transform_matrix = tl.prepro.transform_matrix_offset_center(M_combined, x=rgb_image.shape[1], y=rgb_image.shape[0])
     rgb_image = tl.prepro.affine_transform_cv2(rgb_image, transform_matrix)
     depth_image = tl.prepro.affine_transform_cv2(depth_image, transform_matrix, border_mode='replicate')
     annos2d = tl.prepro.affine_transform_keypoints(annos2d, transform_matrix)
@@ -126,7 +127,6 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     # concat augmented rgb and depth
     depth_image = np.expand_dims(depth_image, axis=2)
     input_2d = np.concatenate((rgb_image, depth_image), axis=2)
-    input_2d = (-input_2d + 255 if percent > 0.25 and percent < 0.5 else input_2d)
 
     # generate 2d result maps including keypoints heatmap, pafs
     height, width, _ = input_2d.shape

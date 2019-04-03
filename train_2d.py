@@ -22,7 +22,7 @@ sys.path.append('.')
 
 from train_config import config
 from openpose_plus.models import model
-from openpose_plus.utils import PoseInfo, get_heatmap, get_vectormap, tf_repeat, draw_results
+from openpose_plus.utils import PoseInfo, read_depth, get_heatmap, get_vectormap, tf_repeat, draw_results
 
 tf.logging.set_verbosity(tf.logging.DEBUG)
 tl.logging.set_verbosity(tl.logging.DEBUG)
@@ -110,15 +110,18 @@ def _2d_data_aug_fn(rgb_image, depth_list, ground_truth2d):
     annos2d = cPickle.loads(ground_truth2d)
     annos2d = list(annos2d)
 
-    depth_image = sio.loadmat(depth_list)['depthim_incolor']
-    depth_image = depth_image / 20.0
+    rgb_image = 255 - rgb_image if np.random.uniform() < 0.25 else rgb_image
+
+    depth_image = read_depth(depth_list.decode())
+    depth_image = depth_image / np.random.uniform(20, 40)
+    depth_image = tl.prepro.drop(depth_image, keep=np.random.uniform())
 
     ## 2d data augmentation
     # random transfrom
     M_rotate = tl.prepro.affine_rotation_matrix(angle=(-30, 30))  # original paper: -40~40
     M_zoom = tl.prepro.affine_zoom_matrix(zoom_range=(0.5, 0.8))  # original paper: 0.5~1.1
     M_combined = M_rotate.dot(M_zoom)
-    transform_matrix = tl.prepro.transform_matrix_offset_center(M_combined, x=rgb_image.shape[0], y=rgb_image.shape[1])
+    transform_matrix = tl.prepro.transform_matrix_offset_center(M_combined, x=rgb_image.shape[1], y=rgb_image.shape[0])
     rgb_image = tl.prepro.affine_transform_cv2(rgb_image, transform_matrix)
     depth_image = tl.prepro.affine_transform_cv2(depth_image, transform_matrix, border_mode='replicate')
     annos2d = tl.prepro.affine_transform_keypoints(annos2d, transform_matrix)
