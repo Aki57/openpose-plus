@@ -306,40 +306,34 @@ if __name__ == '__main__':
         ## read your own images contains valid people
         ##   data/your_data
         ##           /KINECTNODE1
-        ##               meta.mat
+        ##               train.mat
+        ##               val.mat
+        ##               test.mat
         ##               anno_01_00000118.mat
         ##               color_01_00000118.jpg
-        ##               depth_01_00000118.mat
+        ##               depth_01_00000118.png
         ##           /KINECTNODE2
         ##           ...
         ## have a folder with many folders: (which is common in industry)
         root_list = tl.files.load_folder_list(path=config.DATA.data_path)
-        sum_depths_file_list, sum_cams_list, sum_anno2ds_list, sum_anno3ds_list = [], [], [], []
+        train_depths_list, train_cams_list, train_anno2ds_list, train_anno3ds_list = [], [], [], []
+        val_depths_list, val_cams_list, val_anno2ds_list, val_anno3ds_list = [], [], [], []
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if config.DATA.image_path in folder:
-                    _depths_file_list, _cams_list, _anno2ds_list, _anno3ds_list = \
-                        get_pose_data_list(folder, config.DATA.anno_name, 9, 0.25)
-                    sum_depths_file_list.extend(_depths_file_list)
-                    sum_cams_list.extend(_cams_list)
-                    sum_anno2ds_list.extend(_anno2ds_list)
-                    sum_anno3ds_list.extend(_anno3ds_list)
-        # 取1/10样本训练验证有效性
-        sum_depths_file_list = sum_depths_file_list[::50]
-        sum_cams_list = sum_cams_list[::50]
-        sum_anno2ds_list = sum_anno2ds_list[::50]
-        sum_anno3ds_list = sum_anno3ds_list[::50]
-        print("Total number of own samples found:", len(sum_depths_file_list))
+                    _depths_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder, config.DATA.train_anno, 9, 0.25)
+                    train_depths_list.extend(_depths_list)
+                    train_cams_list.extend(_cams_list)
+                    train_anno2ds_list.extend(_anno2ds_list)
+                    train_anno3ds_list.extend(_anno3ds_list)
+                    _depths_list, _cams_list, _anno2ds_list, _anno3ds_list = get_pose_data_list(folder, config.DATA.val_anno, 9, 0.25)
+                    val_depths_list.extend(_depths_list)
+                    val_cams_list.extend(_cams_list)
+                    val_anno2ds_list.extend(_anno2ds_list)
+                    val_anno3ds_list.extend(_anno3ds_list)
+        print("Total {} samples for training, {} samples for validation.".format(len(train_depths_list), len(val_depths_list)))
     
-    from sklearn.model_selection import train_test_split
-    train_depths_list, eval_depths_list, \
-    train_cams_list, eval_cams_list, \
-    train_anno2ds_list, eval_anno2ds_list, \
-    train_anno3ds_list, eval_anno3ds_list = train_test_split(
-        sum_depths_file_list, sum_cams_list, sum_anno2ds_list, sum_anno3ds_list, test_size=0.2, random_state=42)
-    print("{} samples for training, {} samples for evalutation.".format(len(train_depths_list), len(eval_depths_list)))
-
     # define data augmentation
     def train_ds_generator():
         """TF Dataset generator."""
@@ -347,14 +341,14 @@ if __name__ == '__main__':
             yield _input_depth.encode('utf-8'), cPickle.dumps(_calib_cam), cPickle.dumps(_target_anno2d), cPickle.dumps(_target_anno3d)
     train_ds = tf.data.Dataset().from_generator(train_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
 
-    def eval_ds_generator():
+    def val_ds_generator():
         """TF Dataset generator."""
-        for _input_depth, _calib_cam, _target_anno2d, _target_anno3d in zip(eval_depths_list, eval_cams_list, eval_anno2ds_list, eval_anno3ds_list):
+        for _input_depth, _calib_cam, _target_anno2d, _target_anno3d in zip(val_depths_list, val_cams_list, val_anno2ds_list, val_anno3ds_list):
             yield _input_depth.encode('utf-8'), cPickle.dumps(_calib_cam), cPickle.dumps(_target_anno2d), cPickle.dumps(_target_anno3d)
-    eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
+    eval_ds = tf.data.Dataset().from_generator(val_ds_generator, output_types=(tf.string, tf.string, tf.string, tf.string))
 
     for epoch in range(1, n_epoch+1):
         tf.reset_default_graph()
         train(train_ds, epoch, len(train_depths_list)//batch_size)
         tf.reset_default_graph()
-        evaluate(eval_ds, epoch, len(eval_depths_list)//batch_size)
+        evaluate(eval_ds, epoch, len(val_depths_list)//batch_size)

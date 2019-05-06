@@ -238,7 +238,7 @@ if __name__ == '__main__':
         ##               meta.mat
         ##               anno_01_00000118.mat
         ##               color_01_00000118.jpg
-        ##               depth_01_00000118.mat
+        ##               depth_01_00000118.png
         ##           /KINECTNODE2
         ##           ...
         ## have a folder with many folders: (which is common in industry)
@@ -249,7 +249,7 @@ if __name__ == '__main__':
             for folder in folder_list:
                 if config.DATA.image_path in folder:
                     _rgbs_file_list, _depths_file_list, _anno2ds_list = \
-                        get_pose_data_list(folder, config.DATA.anno_name, 5, 0.25)
+                        get_pose_data_list(folder, config.DATA.train_anno, 5, 0.25)
                     sum_rgbs_file_list.extend(_rgbs_file_list)
                     sum_depths_file_list.extend(_depths_file_list)
                     sum_anno2ds_list.extend(_anno2ds_list)

@@ -280,32 +280,31 @@ if __name__ == '__main__':
         ## read your own images contains valid people
         ##   data/your_data
         ##           /KINECTNODE1
-        ##               meta.mat
+        ##               train.mat
+        ##               val.mat
+        ##               test.mat
         ##               anno_01_00000118.mat
         ##               color_01_00000118.jpg
-        ##               depth_01_00000118.mat
+        ##               depth_01_00000118.png
         ##           /KINECTNODE2
         ##           ...
         ## have a folder with many folders: (which is common in industry)
         root_list = tl.files.load_folder_list(path=config.DATA.data_path)
-        sum_rgbs_file_list, sum_depths_file_list, sum_anno2ds_list = [], [], []
+        train_rgbs_list, train_depths_list, train_anno2ds_list = [], [], []
+        val_rgbs_list, val_depths_list, val_anno2ds_list = [], [], []
         for root in root_list:
             folder_list = tl.files.load_folder_list(path=root)
             for folder in folder_list:
                 if config.DATA.image_path in folder:
-                    _rgbs_file_list, _depths_file_list, _anno2ds_list = \
-                        get_pose_data_list(folder, config.DATA.anno_name, 5, 0.25)
-                    sum_rgbs_file_list.extend(_rgbs_file_list)
-                    sum_depths_file_list.extend(_depths_file_list)
-                    sum_anno2ds_list.extend(_anno2ds_list)
-        print("Total number of own images found:", len(sum_rgbs_file_list))
-
-    from sklearn.model_selection import train_test_split
-    train_rgbs_list, eval_rgbs_list, \
-    train_depths_list, eval_depths_list, \
-    train_anno2ds_list, eval_anno2ds_list = train_test_split(
-        sum_rgbs_file_list, sum_depths_file_list, sum_anno2ds_list, test_size=0.2, random_state=42)
-    print("{} images for training, {} images for evalutation.".format(len(train_rgbs_list), len(eval_rgbs_list)))
+                    _rgbs_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder, config.DATA.train_anno, 5, 0.25)
+                    train_rgbs_list.extend(_rgbs_list)
+                    train_depths_list.extend(_depths_file_list)
+                    train_anno2ds_list.extend(_anno2ds_list)
+                    _rgbs_list, _depths_file_list, _anno2ds_list = get_pose_data_list(folder, config.DATA.val_anno, 5, 0.25)
+                    val_rgbs_list.extend(_rgbs_list)
+                    val_depths_list.extend(_depths_file_list)
+                    val_anno2ds_list.extend(_anno2ds_list)
+        print("Total {} images for training, {} images for validation.".format(len(train_rgbs_list), len(val_rgbs_list)))
 
     # define data augmentation
     def train_ds_generator():
@@ -314,14 +313,14 @@ if __name__ == '__main__':
             yield _input_rgb.encode('utf-8'), _input_depth.encode('utf-8'), cPickle.dumps(_target_anno2d)
     train_ds = tf.data.Dataset().from_generator(train_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
-    def eval_ds_generator():
+    def val_ds_generator():
         """TF Dataset generator."""
-        for _input_rgb, _input_depth, _target_anno2d in zip(eval_rgbs_list, eval_depths_list, eval_anno2ds_list):
+        for _input_rgb, _input_depth, _target_anno2d in zip(val_rgbs_list, val_depths_list, val_anno2ds_list):
             yield _input_rgb.encode('utf-8'), _input_depth.encode('utf-8'), cPickle.dumps(_target_anno2d)
-    eval_ds = tf.data.Dataset().from_generator(eval_ds_generator, output_types=(tf.string, tf.string, tf.string))
+    val_ds = tf.data.Dataset().from_generator(val_ds_generator, output_types=(tf.string, tf.string, tf.string))
 
     for epoch in range(1, n_epoch+1):
         tf.reset_default_graph()
         train(train_ds, epoch, (int)(len(train_rgbs_list)//batch_size))
         tf.reset_default_graph()
-        evaluate(eval_ds, epoch, (int)(len(eval_rgbs_list)//batch_size))
+        evaluate(val_ds, epoch, (int)(len(val_rgbs_list)//batch_size))

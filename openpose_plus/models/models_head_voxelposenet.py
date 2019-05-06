@@ -20,7 +20,7 @@ def model(x, n_pos, reuse=False, use_slim=False, data_format='channels_last'):
         depth = shape[2]
         f = math.ceil(width/2.0)
         c = (2 * f - 1 - f % 2) / (2.0 * f)
-        trilinear = np.zeros([shape[0], shape[1], shape[2]])
+        trilinear = np.zeros([width, height, depth])
         for x in range(width):
             for y in range(height):
                 for z in range(depth):
@@ -126,7 +126,7 @@ def model(x, n_pos, reuse=False, use_slim=False, data_format='channels_last'):
 
             if len(scorevolume_list) != 0:
                 scorevolume = ElementwiseLayer([scorevolume, scorevolume_list[-1]], combine_fn=tf.add, name='add')
-            scorevolume = BatchNormLayer(scorevolume, is_train=bool(1-reuse), name='bn%d'%block_id)
+            # scorevolume = BatchNormLayer(scorevolume, is_train=bool(1-reuse), name='bn%d'%block_id)
             scorevolume_list.append(scorevolume)
 
         return scorevolume_list, scorevolume_list[-1]

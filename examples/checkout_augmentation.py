@@ -15,6 +15,7 @@ sys.path.append('.')
 from openpose_plus.inference.common import measure, CocoPairs
 from openpose_plus.utils import Camera, PoseInfo, read_depth, aug_depth, create_voxelgrid, keypoints_affine, keypoint_flip
 
+
 def get_2d_files(data_path):
     sum_rgbs_list, sum_depths_list, sum_joint2d_list = [], [], []
     root_list = tl.files.load_folder_list(path=data_path)
@@ -58,6 +59,8 @@ def _show_input_2d(rgb_image, depth_image, coord_uv_list):
         plt.plot(coord_uv[:,0], coord_uv[:,1], '.')
         for pair in CocoPairs:
             plt.plot(coord_uv[pair,0], coord_uv[pair,1], linewidth=2)
+    plt.xlim(0, rgb_image.shape[1])
+    plt.ylim(rgb_image.shape[0], 0)
     plt.draw()
     
     plt.subplot(2,1,2)
@@ -67,6 +70,8 @@ def _show_input_2d(rgb_image, depth_image, coord_uv_list):
         plt.plot(coord_uv[:,0], coord_uv[:,1], 'r.')
         for pair in CocoPairs:
             plt.plot(coord_uv[pair,0], coord_uv[pair,1], linewidth=2)
+    plt.xlim(0, rgb_image.shape[1])
+    plt.ylim(rgb_image.shape[0], 0)
     plt.draw()
     plt.show()
 

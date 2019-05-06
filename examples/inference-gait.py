@@ -26,7 +26,6 @@ def get_files(data_path, color_folder, depth_folder, camera_file):
         pass
     rgb_path = os.path.join(data_path, color_folder)
     dep_path = os.path.join(data_path, depth_folder)
-    cam_file = os.path.join(data_path, camera_file)
     if tl.files.folder_exists(rgb_path):
         rgbs_list = tl.files.load_file_list(rgb_path, regx='\.jpg')
         rgbs_list = [rgb_path + '/' + rgb for rgb in rgbs_list]
@@ -37,8 +36,9 @@ def get_files(data_path, color_folder, depth_folder, camera_file):
         deps_list = [dep_path + '/' + dep for dep in deps_list]
     else:
         print("[skip] dep_path is not found: {}".format(data_path))
-    if os.path.exists(cam_file):
-        params = [float(line.split(" : ")[1]) for line in open(cam_file,"r")]
+
+    if os.path.exists(camera_file):
+        params = [float(line.split(" : ")[1]) for line in open(camera_file,"r")]
         cam_K = np.array([[params[0], 0.0, params[2]],
                         [0.0, params[1], params[3]],
                         [0.0, 0.0, 1.0]])
@@ -50,7 +50,7 @@ def get_files(data_path, color_folder, depth_folder, camera_file):
     return rgbs_list, deps_list, cam_info
 
 
-def write_gait(coords_list, filename):
+def write_kp_to_txt(coords_list, filename):
     with open(filename,'w') as f:
         # 对openpose输出结果的转换
         transform = [8, 8, 1, 0, 5, 6, 7, -1, 2, 3, 4, -1, 11, 12, 13, -1, 8, 9, 10, -1, 2, -1, -1, -1, -1]
@@ -78,8 +78,24 @@ def write_gait(coords_list, filename):
             f.writelines(line)
 
 
+def write_kp_to_mat(coords2d_list, coords3d_list, filename):
+    for idx, coords in enumerate(coords2d_list):
+        if coords is None:
+            coords2d_list[idx] = np.array([np.array([50000,50000,50000])] * 18)
+        else:
+            coords_z = 50000 * np.ones_like(coords[:,0])
+            coords2d_list[idx] = np.concatenate((coords, np.expand_dims(coords_z,-1)), axis=1)
+    
+    for idx, coords in enumerate(coords3d_list):
+        if coords is None:
+            coords3d_list[idx] = np.array([np.array([50000,50000,50000])] * 18)
+
+    import scipy.io as sio
+    sio.savemat(filename, {'keypoints2d':coords2d_list,'keypoints3d':coords3d_list})
+
+
 def inference_data(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_info):
-    height, width, channel = (368, 432, 4)
+    height, width, channel = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
     e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
 
@@ -111,15 +127,16 @@ def inference_data(base_model_name, base_npz_path, head_model_name, head_npz_pat
             coords_uv_list.append(coords2d)
             coords_xyz_list.append(coords3d_pred*1000.0)
             
-    write_gait(coords_uv_list, 'gait2d.txt')
-    write_gait(coords_xyz_list, 'gait3d.txt')
+    # write_kp_to_txt(coords_uv_list, 'keypoints2d.txt')
+    # write_kp_to_txt(coords_xyz_list, 'keypoints3d.txt')
+    write_kp_to_mat(coords_uv_list, coords_xyz_list, 'keypoints.mat')
 
     mean = (time.time() - time0) / len(rgb_files)
     print('inference all took: %f, mean: %f, FPS: %f' % (time.time() - time0, mean, 1.0 / mean))
 
 
 def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
-    height, width, channel = (368, 432, 4)
+    height, width, channel = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
     e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
 
@@ -128,7 +145,7 @@ def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
         input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
         humans, heatMap, pafMap = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
-        plot_humans(input_2d, heatMap, pafMap, humans, '%02d' % (idx + 1))
+        plot_humans(input_2d[:,:,:-1], heatMap, pafMap, humans, '%02d' % (idx + 1))
 
         if len(humans):
             coords2d, _, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h, 0.1)
@@ -141,7 +158,7 @@ def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
 
 
 def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_info):
-    height, width, channel = (368, 432, 4)
+    height, width, channel = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
     e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
 
@@ -171,9 +188,9 @@ def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path,
             # coords3d = measure(lambda: e_3d.regression(input_3d), 'e_3d.inference')
             # coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
 
-            plot_human3d(rgb_name, dep_name, coords3d_pred, cam_calib, idx, coords2d_vis)
+        #     plot_human3d(rgb_name, dep_name, coords3d_pred, cam_calib, idx, coords2d_vis)
 
-        do_plot()
+        # do_plot()
 
     mean = (time.time() - time0) / len(rgb_files)
     print('inference all took: %f, mean: %f, FPS: %f' % (time.time() - time0, mean, 1.0 / mean))
@@ -185,7 +202,7 @@ if __name__ == '__main__':
     head_npz_path = 'models/3d/voxelposenet-False.npz' # str, default='', help='path to npz', required=True
     head_model = 'voxelposenet' # str, default='voxelposenet', help='voxelposenet | pixelposenet'
 
-    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database', '2color', '2depth/filter', 'kinect2.txt')
+    rgb_files, dep_files, cam_info = get_files('f:/Lab/dataset/Gait-Database/2019-03-25_22-45', 'color', 'depth/filter', 'f:/Lab/dataset/Gait-Database/rgbIP/kinect2.txt')
     # inference_2d(base_model, base_npz_path, rgb_files, dep_files)
     inference_3d(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info)
     # inference_data(base_model, base_npz_path, head_model, head_npz_path, rgb_files, dep_files, cam_info)

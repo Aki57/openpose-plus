@@ -57,7 +57,9 @@ config.DATA = edict()
 config.DATA.train_data = 'custom'  # coco, custom, coco_and_custom
 config.DATA.data_path = 'f:/Lab/dataset/panoptic-toolbox/data'
 config.DATA.image_path = 'KINECTNODE'
-config.DATA.anno_name = 'meta2.mat'
+config.DATA.train_anno = 'train.mat'
+config.DATA.val_anno = 'val.mat'
+config.DATA.test_anno = 'test.mat'
 
 config.LOG = edict()
 config.LOG.vis_path = 'vis'

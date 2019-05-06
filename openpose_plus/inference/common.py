@@ -224,20 +224,19 @@ def plot_human2d(rgb_path, dep_path, coords2d, idx=None, coordsvis=None):
     plt.draw()
 
 
-def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
+def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None, coords3d_gt=None):
     import matplotlib.gridspec as gridspec
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
-
-    if coordsvis is None:
-        coords3d = np.array(coords3d)/100.0
-        coordsvis = np.ones_like(coords3d[:,0], dtype=np.bool)
 
     dep_img = read_depth(dep_path)
     rgb_img = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
     if rgb_img.shape[:2] != dep_img.shape:
         rgb_img = cv2.resize(rgb_img, (dep_img.shape[1], dep_img.shape[0]))
     coords2d_proj = cam.project(coords3d[coordsvis,:])
+
+    if coords3d_gt is not None:
+        coords3d_gt = np.array(coords3d_gt)/100.0
 
     # 2d display for 3d body projecttion on Kinect frame
     plt.figure(figsize=[15, 8])
@@ -262,7 +261,11 @@ def plot_human3d(rgb_path, dep_path, coords3d, cam, idx=0, coordsvis=None):
         if coordsvis[pair[0]] and coordsvis[pair[1]]:
             ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], linewidth=2)
         else:
-            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], color='k')
+            ax.plot(coords3d[pair,0], coords3d[pair,2], coords3d[pair,1], color='g')
+
+    if coords3d_gt is not None:
+        for pair in CocoPairs:
+            ax.plot(coords3d_gt[pair,0], coords3d_gt[pair,2], coords3d_gt[pair,1], color='k')
 
     # stable range of sight
     axis_range = np.array([[-1.1,1.1,-1.1], [1.1,-1.1,1.1]])

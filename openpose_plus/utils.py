@@ -90,7 +90,7 @@ class PoseInfo:
         self.min_score = min_score
 
         if not os.path.exists(self.metas_path):
-            print("[skip] meta.mat is not found: {}".format(self.base_dir))
+            print("[skip] {} is not found: {}".format(metas_filename, self.base_dir))
         else:
             self.get_image_annos()
 
@@ -330,6 +330,13 @@ def _voxelize(cam, depth_warped, mask, voxel_root, grid_size, grid_size_m, f=1.0
     z_vec = np.reshape(depth_warped[mask], [-1])
     pcl_xyz = cam.unproject(uv_vec, z_vec)
 
+    # from mpl_toolkits.mplot3d import Axes3D
+    # plt.figure(figsize=[8, 8])
+    # ax = plt.subplot(111, projection='3d')
+    # ax.scatter(pcl_xyz[::1000,0], pcl_xyz[::1000,2], pcl_xyz[::1000,1], marker='.')  # 绘制数据点
+    # plt.draw()
+    # plt.show()
+
     # 2. Scale down to voxel size and quantize
     pcl_xyz_rel = pcl_xyz - voxel_root
     pcl_xyz_01 = (pcl_xyz_rel - grid_size_m[0, :]) / (grid_size_m[1, :] - grid_size_m[0, :])
@@ -342,6 +349,12 @@ def _voxelize(cam, depth_warped, mask, voxel_root, grid_size, grid_size_m, f=1.0
     cond_z = np.logical_and(pcl_xyz_vox[:, 2] < grid_size[0, 2], pcl_xyz_vox[:, 2] >= 0)
     cond = np.logical_and(cond_x, np.logical_and(cond_y, cond_z))
     pcl_xyz_vox = pcl_xyz_vox[cond, :]
+
+    # plt.figure(figsize=[8, 8])
+    # ax = plt.subplot(111, projection='3d')
+    # ax.scatter(pcl_xyz_vox[::100,0], pcl_xyz_vox[::100,2], pcl_xyz_vox[::100,1], marker='.')  # 绘制数据点
+    # plt.draw()
+    # plt.show()
 
     # 4. Set values in the grid
     voxel_grid = np.zeros((grid_size[0, :]))
@@ -511,7 +524,7 @@ def get_heatmap(annos, height, width):
         # loop through all people and keep the maximum
 
         for i, points in enumerate(joint):
-            if points[0] < 0 or points[1] < 0:
+            if points[0] < 0 or points[1] < 0 or points[0] >= width or points[1] >= height:
                 continue
             joints_heatmap = put_heatmap(joints_heatmap, i, points, 8.0)
 

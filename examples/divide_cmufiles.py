@@ -11,6 +11,7 @@ from sklearn.model_selection import train_test_split
 
 sys.path.append('.')
 
+from train_config import config
 from openpose_plus.inference.common import measure
 
 
@@ -42,20 +43,30 @@ def split_meta(base_dir, meta_name, train_name, val_name, test_name):
         train_rgb_names.sort()
         train_depth_names.sort()
         train_anno_names.sort()
-        sio.savemat(train_path, {'cam':cam_info,'rgb':train_rgb_names,'depth':train_depth_names,'anno':train_anno_names})
+        if len(train_anno_names) > 0:
+            sio.savemat(train_path, {'cam':cam_info,'rgb':train_rgb_names,'depth':train_depth_names,'anno':train_anno_names})
+        else:
+            os.remove(train_path)
 
         val_rgb_names.sort()
         val_depth_names.sort()
         val_anno_names.sort()
-        sio.savemat(val_path, {'cam':cam_info,'rgb':val_rgb_names,'depth':val_depth_names,'anno':val_anno_names})
+        if len(val_anno_names) > 0:
+            sio.savemat(val_path, {'cam':cam_info,'rgb':val_rgb_names,'depth':val_depth_names,'anno':val_anno_names})
+        else:
+            os.remove(val_path)
 
         test_rgb_names.sort()
         test_depth_names.sort()
         test_anno_names.sort()
-        sio.savemat(test_path, {'cam':cam_info,'rgb':test_rgb_names,'depth':test_depth_names,'anno':test_anno_names})
+        if len(test_anno_names) > 0:
+            sio.savemat(test_path, {'cam':cam_info,'rgb':test_rgb_names,'depth':test_depth_names,'anno':test_anno_names})
+        else:
+            os.remove(test_path)
+
         print("Dataset division is finished in ", base_dir)
     else:
-        print("[skip] meta.mat is not found: ", base_dir)
+        print("[skip] meta file is not found: ", base_dir)
 
 
 def main():
@@ -67,7 +78,7 @@ def main():
         for folder in folder_list:
             if 'KINECTNODE' in folder:
                 print("[x] Get pose data from {}".format(folder))
-                split_meta(folder, 'meta.mat', 'train.mat', 'val.mat', 'test.mat')
+                split_meta(folder, 'meta2.mat', config.DATA.train_anno, config.DATA.val_anno, config.DATA.test_anno)
 
     print('Check all took: %f' % (time.time() - time0))
 

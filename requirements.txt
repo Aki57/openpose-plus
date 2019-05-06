@@ -1,10 +1,10 @@
 # conda
 cython>=0.29
 numpy>=1.14,<1.16
-easydict>=1.8,<=1.10
 nltk>=3.3,<3.4
+tensorflow>=1.8.0,<=1.12.0
 # pip
 opencv-python>=3.4,<3.5
-# tensorflow>=1.8.0,<=1.12.0
+easydict>=1.8,<=1.10
 tensorlayer>=1.11.1
 # pycocotools  # must be installed after cython and numpy are installed
