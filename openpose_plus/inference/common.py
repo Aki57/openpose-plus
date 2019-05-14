@@ -43,7 +43,7 @@ CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255
               [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
 
 
-def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last'):
+def read_2dfiles(rgb_path, dep_path, size, data_format='channels_last'):
     """Read image file and resize to network input size."""
     dep_img = read_depth(dep_path) / 20.0
     init_h, init_w = dep_img.shape
@@ -53,20 +53,20 @@ def read_2dfiles(rgb_path, dep_path, height, width, data_format='channels_last')
         rgb_img = cv2.resize(rgb_img, (init_w, init_h))
 
     input_2d = np.concatenate((rgb_img, np.expand_dims(dep_img, -1)), -1)
-    if height is not None and width is not None:
-        input_2d = cv2.resize(input_2d, (width, height))
+    if size[0] is not None and size[1] is not None:
+        input_2d = cv2.resize(input_2d, (size[1], size[0]))
     if data_format == 'channels_first':
         input_2d = input_2d.transpose([2, 0, 1])
 
     return input_2d / 255.0, init_h, init_w
 
 
-def read_3dfiles(dep_path, cam_info, coords2d, coordsvis, width, height, depth, data_format='channels_last'):
+def read_3dfiles(dep_path, cam_info, coords2d, coordsvis, size, data_format='channels_last'):
     """Read image file and resize to network input size."""
     dep_img = read_depth(dep_path) / 1000.0
-    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, (width, height, depth), voxel_f, coordsvis)
-    voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (width, height), heatmap_sigma, voxel_coordsvis)
-    voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, depth, 1])
+    voxel_grid, voxel_coords2d, voxel_coordsvis, trafo_params = create_voxelgrid(cam_info, dep_img, coords2d, size, voxel_f, coordsvis)
+    voxel_kp, _ = get_kp_heatmap(voxel_coords2d, (size[0], size[1]), heatmap_sigma, voxel_coordsvis)
+    voxel_kp = np.tile(np.expand_dims(voxel_kp, 2), [1, 1, size[2], 1])
     voxel_grid = np.expand_dims(voxel_grid, -1)
     input_3d = np.concatenate((voxel_grid, voxel_kp), 3)
     return np.expand_dims(input_3d, 0), trafo_params

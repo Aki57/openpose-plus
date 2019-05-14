@@ -95,18 +95,18 @@ def write_kp_to_mat(coords2d_list, coords3d_list, filename):
 
 
 def inference_data(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_info):
-    height, width, channel = (368, 656, 4)
+    size_2d = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
-    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
+    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, size_2d), 'create TfPoseEstimator')
 
-    x_size, y_size, z_size = (64, 64, 64)
+    size_3d = (64, 64, 64)
     head_model_func = get_head_model(head_model_name)
-    e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, (x_size, y_size, z_size), False), 'create Pose3DEstimator')
+    e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, size_3d, False), 'create Pose3DEstimator')
 
     time0 = time.time()
     coords_uv_list, coords_xyz_list = list(), list()
     for _, (rgb_name, dep_name) in enumerate(zip(rgb_files, dep_files)):
-        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
+        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, size_2d), 'read_2dfiles')
         humans, _, _ = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
 
@@ -115,7 +115,7 @@ def inference_data(base_model_name, base_npz_path, head_model_name, head_npz_pat
             coords_xyz_list.append(None)
         else:
             coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h, 0.1)
-            input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, x_size, y_size, z_size), 'read_3dfiles')
+            input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, size_3d), 'read_3dfiles')
             coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
             coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
             coords3d_pred_proj = Camera(cam_info['K'], cam_info['distCoef']).unproject(coords2d, coords3d_pred[:, -1])
@@ -136,13 +136,13 @@ def inference_data(base_model_name, base_npz_path, head_model_name, head_npz_pat
 
 
 def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
-    height, width, channel = (368, 656, 4)
+    size_2d = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
-    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
+    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, size_2d), 'create TfPoseEstimator')
 
     time0 = time.time()
     for idx, (rgb_name, dep_name) in enumerate(zip(rgb_files, dep_files)):
-        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
+        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, size_2d), 'read_2dfiles')
         humans, heatMap, pafMap = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
         plot_humans(input_2d[:,:,:-1], heatMap, pafMap, humans, '%02d' % (idx + 1))
@@ -158,25 +158,25 @@ def inference_2d(base_model_name, base_npz_path, rgb_files, dep_files):
 
 
 def inference_3d(base_model_name, base_npz_path, head_model_name, head_npz_path, rgb_files, dep_files, cam_info):
-    height, width, channel = (368, 656, 4)
+    size_2d = (368, 656, 4)
     base_model_func = get_base_model(base_model_name)
-    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, (height, width, channel)), 'create TfPoseEstimator')
+    e_2d = measure(lambda: TfPoseEstimator(base_npz_path, base_model_func, size_2d), 'create TfPoseEstimator')
 
-    x_size, y_size, z_size = (64, 64, 64)
+    size_3d = (64, 64, 64)
     head_model_func = get_head_model(head_model_name)
-    e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, (x_size, y_size, z_size), False), 'create Pose3DEstimator')
+    e_3d = measure(lambda: Pose3DEstimator(head_npz_path, head_model_func, size_3d, False), 'create Pose3DEstimator')
 
     cam_calib =  Camera(cam_info['K'], cam_info['distCoef'])
 
     time0 = time.time()
     for idx, (rgb_name, dep_name) in enumerate(zip(rgb_files, dep_files)):
-        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, height, width), 'read_2dfiles')
+        input_2d, init_h, init_w = measure(lambda: read_2dfiles(rgb_name, dep_name, size_2d), 'read_2dfiles')
         humans, _, _ = measure(lambda: e_2d.inference(input_2d), 'e_2d.inference')
         print('got %d humans from %s' % (len(humans), rgb_name[:-4]))
 
         if len(humans):
             coords2d, coords2d_conf, coords2d_vis = tranform_keypoints2d(humans[0].body_parts, init_w, init_h, 0.1)
-            input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, x_size, y_size, z_size), 'read_3dfiles')
+            input_3d, trafo_params = measure(lambda: read_3dfiles(dep_name, cam_info, coords2d, coords2d_vis, size_3d), 'read_3dfiles')
 
             coords3d, coords3d_conf = measure(lambda: e_3d.inference(input_3d), 'e_3d.inference')
             coords3d_pred = coords3d * trafo_params['scale'] + trafo_params['root']
